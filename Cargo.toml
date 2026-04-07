@@ -1,0 +1,32 @@
+[package]
+name = "glimmer"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "beacon"
+path = "src/bin/beacon.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+p256 = { version = "0.13", features = ["ecdh"] }
+aes-gcm = "0.10"
+rand = "0.8"
+zeroize = "1"
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.12", features = ["blocking"] }
+chrono = "0.4"
+
+[profile.release]
+opt-level = "z"     # optimize for size over speed
+lto = true          # link-time optimization, eliminates dead code
+codegen-units = 1   # single codegen unit, better optimization
+panic = "abort"     # no unwinding machinery
+strip = true        # strip symbols and debug info
