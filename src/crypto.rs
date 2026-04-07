@@ -10,6 +10,7 @@ use p256::{
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
+use crate::errors::CryptoError;
 
 // Beacon-side: ephemeral keypair, used once
 
@@ -36,8 +37,9 @@ impl EphemeralKeypair {
     pub fn derive_session_key(
         self,
         peer_public_bytes: &[u8],
-    ) -> Result<SessionKey, Box<dyn std::error::Error>> {
-        let peer = PublicKey::from_sec1_bytes(peer_public_bytes)?;
+    ) -> Result<SessionKey, CryptoError> {
+        let peer = PublicKey::from_sec1_bytes(peer_public_bytes)
+            .map_err(|e| CryptoError::InvalidPublicKey(e.to_string()))?;
         let shared = self.secret.diffie_hellman(&peer);
         Ok(SessionKey::from_shared_secret(shared.raw_secret_bytes()))
     }
@@ -57,6 +59,17 @@ impl StaticKeypair {
         StaticKeypair { secret, public }
     }
 
+    pub fn from_secret_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        let secret = SecretKey::from_slice(bytes)
+            .map_err(|e| CryptoError::InvalidPublicKey(e.to_string()))?;
+        let public = secret.public_key();
+        Ok(StaticKeypair { secret, public })
+    }
+
+    pub fn secret_bytes_hex(&self) -> String {
+        hex::encode(self.secret.to_bytes())
+    }
+
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.public
             .to_encoded_point(true)
@@ -69,8 +82,9 @@ impl StaticKeypair {
     pub fn derive_session_key(
         &self,
         peer_public_bytes: &[u8],
-    ) -> Result<SessionKey, Box<dyn std::error::Error>> {
-        let peer = PublicKey::from_sec1_bytes(peer_public_bytes)?;
+    ) -> Result<SessionKey, CryptoError> {
+        let peer = PublicKey::from_sec1_bytes(peer_public_bytes)
+            .map_err(|e| CryptoError::InvalidPublicKey(e.to_string()))?;
         let shared = p256::ecdh::diffie_hellman(
             self.secret.to_nonzero_scalar(),
             peer.as_affine(),
@@ -97,9 +111,10 @@ impl SessionKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         SessionKey { key: bytes }
     }
-
-    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let cipher = Aes256Gcm::new_from_slice(&self.key)?;
+    
+    pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let cipher = Aes256Gcm::new_from_slice(&self.key)
+            .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
         let mut nonce_bytes = [0u8; 12];
         rand::RngCore::fill_bytes(&mut OsRng, &mut nonce_bytes);
@@ -107,7 +122,7 @@ impl SessionKey {
 
         let ciphertext = cipher
             .encrypt(nonce, plaintext)
-            .map_err(|e| format!("encrypt: {}", e))?;
+            .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
         let mut output = Vec::with_capacity(12 + ciphertext.len());
         output.extend_from_slice(&nonce_bytes);
@@ -116,18 +131,19 @@ impl SessionKey {
         Ok(output)
     }
 
-    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
         if data.len() < 12 {
-            return Err("ciphertext too short".into());
+            return Err(CryptoError::CiphertextTooShort(data.len()));
         }
 
-        let cipher = Aes256Gcm::new_from_slice(&self.key)?;
+        let cipher = Aes256Gcm::new_from_slice(&self.key)
+            .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
         let nonce = Nonce::from_slice(&data[..12]);
         let ciphertext = &data[12..];
 
         let plaintext = cipher
             .decrypt(nonce, ciphertext)
-            .map_err(|e| format!("decrypt: {}", e))?;
+            .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
         Ok(plaintext)
     }
@@ -137,4 +153,13 @@ impl Drop for SessionKey {
     fn drop(&mut self) {
         self.key.zeroize();
     }
+}
+
+pub fn key_id(public_key_bytes: &[u8]) -> [u8; 4] {
+    let mut hasher = Sha256::new();
+    hasher.update(public_key_bytes);
+    let hash = hasher.finalize();
+    let mut id = [0u8; 4];
+    id.copy_from_slice(&hash[..4]);
+    id
 }

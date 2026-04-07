@@ -1,6 +1,7 @@
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use serde::{Deserialize, Serialize};
+use crate::errors::ProtoError;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -127,13 +128,13 @@ impl Envelope {
         Ok(Self::new(msg_type, node_id, Some(&serialized)))
     }
 
-    pub fn marshal(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn marshal(&self) -> Result<Vec<u8>, ProtoError> {
         let data = serde_json::to_vec(self)?;
         Ok(data)
     }
-}
 
-pub fn unmarshal(data: &[u8]) -> Result<Envelope, Box<dyn std::error::Error>> {
-    let env: Envelope = serde_json::from_slice(data)?;
-    Ok(env)
+    pub fn unmarshal(data: &[u8]) -> Result<Self, ProtoError> {
+        let env: Envelope = serde_json::from_slice(data)?;
+        Ok(env)
+    }
 }
