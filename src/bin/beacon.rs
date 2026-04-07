@@ -126,8 +126,6 @@ fn sleep(base: std::time::Duration, jitter: f64) {
 }
 
 fn hostname() -> String {
-    std::fs::read_to_string("/etc/hostname")
+    glimmer::sys::read_file_string("/etc/hostname")
         .unwrap_or_else(|_| "unknown".into())
-        .trim()
-        .to_string()
 }

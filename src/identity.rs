@@ -1,15 +1,17 @@
+use sha2::{Digest, Sha256};
+
+use crate::sys;
+
 pub fn generate() -> String {
-    use sha2::{Digest, Sha256};
-    
     let mut hasher = Sha256::new();
 
-    if let Ok(mid) = std::fs::read_to_string("/etc/machine-id") {
-        hasher.update(mid.trim().as_bytes());
+    if let Ok(mid) = sys::read_file_string("/etc/machine-id") {
+        hasher.update(mid.as_bytes());
         hasher.update(b"\0");
     }
 
-    if let Ok(mid) = std::fs::read_to_string("/var/lib/dbus/machine-id") {
-        hasher.update(mid.trim().as_bytes());
+    if let Ok(mid) = sys::read_file_string("/var/lib/dbus/machine-id") {
+        hasher.update(mid.as_bytes());
         hasher.update(b"\0");
     }
 
