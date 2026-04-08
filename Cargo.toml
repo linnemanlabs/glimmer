@@ -18,6 +18,10 @@ path = "src/bin/server.rs"
 name = "keygen"
 path = "src/bin/keygen.rs"
 
+[[bin]]
+name = "encode_string"
+path = "src/bin/encode_string.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
