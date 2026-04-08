@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-/// Error codes — no descriptive strings in the binary.
+/// Error codes only. No descriptive strings in the binary.
 /// Map maintained in documentation only.
 pub mod codes {
     // Crypto
