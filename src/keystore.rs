@@ -31,11 +31,7 @@ impl KeyStore {
             let pub_bytes = keypair.public_key_bytes();
             let kid = crypto::key_id(&pub_bytes);
 
-            eprintln!(
-                "[keystore] loaded key {} from {}",
-                hex::encode(kid),
-                file_path.display()
-            );
+            crate::dbg_log!("[dev] [keystore] loaded key {} from {}", hex::encode(kid), file_path.display());
 
             keys.insert(kid, keypair);
         }
@@ -44,7 +40,7 @@ impl KeyStore {
             return Err("no keys found in keystore".into());
         }
 
-        eprintln!("[keystore] {} key(s) loaded", keys.len());
+        crate::dbg_log!("[dev] [keystore] {} key(s) loaded", keys.len());
         Ok(KeyStore { keys })
     }
 

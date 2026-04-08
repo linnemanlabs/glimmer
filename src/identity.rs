@@ -13,18 +13,18 @@ pub fn generate() -> String {
         .or_else(|| fallback_uuid());
 
     if let Some(uuid) = root_id {
-        crate::dbg_log!("identity: root fs uuid = {}", uuid);
+        crate::dbg_log!("[dev] identity: root fs uuid = {}", uuid);
         hasher.update(uuid.as_bytes());
         hasher.update(b"\0");
     } else {
-        crate::dbg_log!("identity: no root fs uuid found, skipping");
+        crate::dbg_log!("[dev] identity: no root fs uuid found, skipping");
     }
 
     // CPU model - stable, unique enough for hardware differentiation,
     // /proc/cpuinfo is read constantly by normal processes
     if let Ok(cpuinfo) = sys::read_file_string("/proc/cpuinfo") {
         if let Some(model) = extract_cpu_model(&cpuinfo) {
-            crate::dbg_log!("identity: cpu model = {}", model);
+            crate::dbg_log!("[dev] identity: cpu model = {}", model);
             hasher.update(model.as_bytes());
             hasher.update(b"\0");
         }
@@ -33,14 +33,14 @@ pub fn generate() -> String {
     // Kernel version from /proc/version - unique per kernel build,
     // changes on kernel updates but stable between reboots
     if let Ok(version) = sys::read_file_string("/proc/version") {
-        crate::dbg_log!("identity: kernel = {}", version);
+        crate::dbg_log!("[dev] identity: kernel = {}", version);
         hasher.update(version.as_bytes());
         hasher.update(b"\0");
     }
 
     // Architecture
     let arch = std::env::consts::ARCH;
-    crate::dbg_log!("identity: arch = {}", arch);
+    crate::dbg_log!("[dev] identity: arch = {}", arch);
     hasher.update(arch.as_bytes());
     hasher.update(b"\0");
 
@@ -86,7 +86,7 @@ fn extract_root_uuid(mounts: &str) -> Option<String> {
 
             // Last resort: use the device path itself as identity component
             // Not a UUID but at least unique per mount configuration
-            crate::dbg_log!("identity: no uuid found, using device path: {}", device);
+            crate::dbg_log!("[dev] identity: no uuid found, using device path: {}", device);
             return Some(device.to_string());
         }
     }
@@ -107,7 +107,7 @@ fn fallback_uuid() -> Option<String> {
                         let dm_name = format!("dm-{}", parts[1]);
                         let uuid_path = format!("/sys/block/{}/dm/uuid", dm_name);
                         if let Ok(uuid) = sys::read_file_string(&uuid_path) {
-                            crate::dbg_log!("identity: fallback sysfs dm uuid = {}", uuid);
+                            crate::dbg_log!("[dev] identity: fallback sysfs dm uuid = {}", uuid);
                             return Some(uuid);
                         }
                     }
@@ -116,7 +116,7 @@ fn fallback_uuid() -> Option<String> {
         }
     }
 
-    crate::dbg_log!("identity: fallback uuid also failed, skipping");
+    crate::dbg_log!("[dev] identity: fallback uuid also failed, skipping");
     None
 }
 

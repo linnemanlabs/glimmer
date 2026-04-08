@@ -413,7 +413,7 @@ pub fn bootstrap_encrypt(
 
     // Derive root secret for time-based mode (different derivation path)
     let mut root_hasher = Sha256::new();
-    root_hasher.update(b"glimmer-time-root");
+    root_hasher.update(&[0x47, 0x4c, 0x54, 0x52, 0x01]);
     root_hasher.update(shared.raw_secret_bytes());
     let root_secret: [u8; 32] = root_hasher.finalize().into();
 
@@ -458,7 +458,7 @@ pub fn bootstrap_decrypt(
 
     // Derive root secret - same path as beacon
     let mut root_hasher = Sha256::new();
-    root_hasher.update(b"glimmer-time-root");
+    root_hasher.update(&[0x47, 0x4c, 0x54, 0x52, 0x01]);
     root_hasher.update(shared.raw_secret_bytes());
     let root_secret: [u8; 32] = root_hasher.finalize().into();
 
