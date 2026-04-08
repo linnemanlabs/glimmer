@@ -32,6 +32,7 @@ let strings = vec![
     ("ETC_HOSTNAME", "/etc/hostname"),
     ("MODEL_NAME", "model name"),
     ("UUID_PREFIX", "UUID="),
+    ("ETC_MACHINE_ID", "/etc/machine-id"),
 ];
 
     let mut code = String::new();
