@@ -10,9 +10,6 @@ pub struct Config {
     // beacon interval seconds
     pub i: u64,
 
-    // jitter percent
-    pub j: f64,
-
     // server public key
     pub k: String,
 }
@@ -31,10 +28,6 @@ impl Config {
 
     pub fn beacon_interval(&self) -> Duration {
         Duration::from_secs(self.i)
-    }
-
-    pub fn jitter(&self) -> f64 {
-        self.j
     }
 
     pub fn server_public_key_bytes(&self) -> Result<Vec<u8>, ConfigError> {

