@@ -377,7 +377,28 @@ impl TimeBasedKey {
 
         Err(CryptoError::DecryptionFailed("no time bucket matched".into()))
     }
+
+
+    /// Derive a 20-bit key mask from a specific epoch timestamp.
+    /// Used by the DNF channel to encode/decode tasking in ETag microseconds.
+    pub fn derive_from_epoch(&self, epoch_secs: i64) -> u32 {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.root_secret);
+        hasher.update(b"dnf-etag-key");
+        hasher.update(&epoch_secs.to_be_bytes());
+        let result = hasher.finalize();
+
+        // Take first 3 bytes, mask to 20 bits
+        let v = ((result[0] as u32) << 16)
+            | ((result[1] as u32) << 8)
+            | (result[2] as u32);
+        v & 0xFFFFF
+    }
+
+
 }
+
+
 
 impl Drop for TimeBasedKey {
     fn drop(&mut self) {

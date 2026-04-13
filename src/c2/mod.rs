@@ -1,3 +1,4 @@
+pub mod dnf;
 pub mod http;
 
 use crate::crypto;

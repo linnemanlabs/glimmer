@@ -1,3 +1,4 @@
+pub mod antidebug;
 pub mod c2;
 pub mod cfg;
 pub mod crypto;

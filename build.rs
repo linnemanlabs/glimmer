@@ -21,6 +21,10 @@ let strings = vec![
     ("HTTP_SCHEME", "http://"),
     ("HTTPS_SCHEME", "https://"),
     ("NULL_BYTE_ERR", "null byte in path"),
+    ("USER_AGENT", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+    ("ACCEPT_HEADER", "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"),
+    ("ACCEPT_LANG", "Accept-Language: en-US,en;q=0.5\r\n"),
+    ("ACCEPT_ENC", "Accept-Encoding: gzip, deflate\r\n"),
 
     // Identity paths
     ("PROC_MOUNTINFO", "/proc/self/mountinfo"),

