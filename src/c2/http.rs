@@ -36,7 +36,7 @@ impl HTTPChannel {
         &self.endpoints[idx % self.endpoints.len()]
     }
 
-    fn advance_endpoint(&self) {
+    fn _advance_endpoint(&self) {
         self.current.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 

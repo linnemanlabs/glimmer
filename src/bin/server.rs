@@ -74,7 +74,7 @@ impl Server {
                     let encoded = (raw ^ (key_mask & 0xFFFFF)) % 1_000_000;
 
                     glimmer::dbg_log!(
-                        "[debug] apply_task: base_second={} key_mask=0x{:05x} raw=0x{:05x} encoded={}",
+                        "[server] apply_task: base_second={} key_mask=0x{:05x} raw=0x{:05x} encoded={}",
                         base_second, key_mask, raw, encoded
                     );
 
@@ -154,8 +154,8 @@ fn handle_connection(
     let is_get = headers.starts_with("GET ");
     let is_repomd = headers.starts_with("GET /pub/fedora/linux/updates/42/Everything/x86_64/os/repodata/repomd.xml HTTP");
 
-    glimmer::dbg_log!("[request] headers={}", headers);
-    glimmer::dbg_log!("[request] is_get={} is_repomd={}", is_get, is_repomd);
+    glimmer::dbg_log!("[server] request headers={}", headers);
+    glimmer::dbg_log!("[server] request is_get={} is_repomd={}", is_get, is_repomd);
 
 
     if is_get && is_repomd {
@@ -196,20 +196,20 @@ fn handle_connection(
                     match envelope.msg_type {
                         MsgType::Beacon => {
                             glimmer::dbg_log!(
-                                "[beacon] {} node={} key_id={} [http]",
+                                "[server] beacon {} node={} key_id={} [http]",
                                 _ts, envelope.node_id, key_id_hex
                             );
                         }
                         MsgType::Result => {
                             glimmer::dbg_log!(
-                                "[result] {} node={} payload={} bytes [http]",
+                                "[server] result {} node={} payload={} bytes [http]",
                                 _ts, envelope.node_id,
                                 envelope.payload.as_ref().map(|p| p.len()).unwrap_or(0),
                             );
                         }
                         _ => {
                             glimmer::dbg_log!(
-                                "[msg] {} node={} type={:?} [http]",
+                                "[server] msg {} node={} type={:?} [http]",
                                 _ts, envelope.node_id, envelope.msg_type
                             );
                         }
@@ -247,7 +247,7 @@ fn handle_connection(
         if let Some(payload) = &envelope.payload {
             let _checkin: glimmer::proto::CheckinData = serde_json::from_slice(payload)?;
             glimmer::dbg_log!(
-                "[checkin] {} node={} os={}/{} host={} pid={} key_id={} [bootstrap]",
+                "[server] checkin {} node={} os={}/{} host={} pid={} key_id={} [bootstrap]",
                 _ts,
                 envelope.node_id,
                 _checkin.os,
@@ -352,7 +352,7 @@ fn handle_dnf_channel(
     _headers: &str,
     _server: &Server,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    glimmer::dbg_log!("[dnf] poll received");
+    glimmer::dbg_log!("[server] dnf poll received");
 
     // Read repomd.xml from disk at runtime
     let path = "data/repomd.xml";
