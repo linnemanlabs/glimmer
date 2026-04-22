@@ -226,7 +226,7 @@ fn encode_qname(name: &str, out: &mut [u8]) -> io::Result<usize> {
     Ok(p + 1)
 }
 
-fn build_dns_query(id: u16, qname: &str, qtype: u16, out: &mut [u8]) -> io::Result<usize> {
+pub fn build_dns_query(id: u16, qname: &str, qtype: u16, out: &mut [u8]) -> io::Result<usize> {
     if out.len() < 12 {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "buffer too small"));
     }
