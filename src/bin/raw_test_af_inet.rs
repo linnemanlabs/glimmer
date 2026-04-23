@@ -1,10 +1,11 @@
 // use glimmer::sys;
 use std::io;
+use glimmer::sys;
 
 fn main() -> io::Result<()> {
     println!("[*] Creating raw socket...");
     
-    let fd = unsafe { libc::socket(2, 3, 6) };
+    let fd = unsafe { libc::socket(2, 3, 6) }; // AF_INET, SOCK_RAW, TCP
     //let fd = sys::socket_tcp()?;
     
     println!("[*] Socket fd: {}", fd);
@@ -45,7 +46,9 @@ fn main() -> io::Result<()> {
     packet[1] = 0x00;           // DSCP/ECN
     let total_len: u16 = 40;
     packet[2..4].copy_from_slice(&total_len.to_be_bytes()); // Total length
-    packet[4..6].copy_from_slice(&0x1234u16.to_be_bytes()); // Identification
+    // packet[4..6].copy_from_slice(&0x1234u16.to_be_bytes()); // IPID
+    let ip_id = sys::rand_u64() as u16;
+    packet[4..6].copy_from_slice(&ip_id.to_be_bytes()); // IPID
     packet[6] = 0x40;           // Dont fragment
     packet[7] = 0x00;           // Fragment offset
     packet[8] = 64;             // TTL
