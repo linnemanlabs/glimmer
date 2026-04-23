@@ -77,7 +77,7 @@ pub fn socket_tcp() -> io::Result<i32> {
 /// Returns fd on success, or -errno in the [-4095, -1] range.
 #[inline]
 pub fn socket_udp() -> io::Result<i32> {
-    // AF_INET = 2, SOCK_STREAM = 1, IPPROTO_TCP = 6
+    // AF_INET = 2, SOCK_DGRAM = 2, IPPROTO_UDP = 17
     let ret: i64;
     unsafe {
         asm!(
