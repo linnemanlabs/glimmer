@@ -1,5 +1,7 @@
 **Date:** 2026-04-08
+
 **Status:** Accepted
+
 **Context:** Standard Rust networking (`TcpStream`) imports `socket`, `connect`, `send`, `recv` from libc. These appear in the binary's dynamic symbol table (`.dynstr`), clearly indicating network capability to any analyst examining imports. We want the import table to reveal as little as possible about the binary's actual capabilities. Also, security tools (EDR, eBPF uprobes, LD_PRELOAD hooks) commonly instrument libc network functions to monitor application behavior. Using libc means every connection is visible to userspace monitoring hooks.
  
 **Decision:** Implement all networking operations through the generic `libc::syscall()` entry point using raw syscall numbers (`SYS_socket`, `SYS_connect`, `SYS_write`, `SYS_read`, `SYS_close`, `SYS_setsockopt`). DNS resolution still uses libc's `getaddrinfo` until a custom resolver is built.

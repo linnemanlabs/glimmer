@@ -1,5 +1,7 @@
 **Date:** 2026-04-08
+
 **Status:** Accepted
+
 **Context:** The beacon needs a stable node identifier that persists across reboots. The original implementation read `/proc/cpuinfo`, `/proc/version`, `/sys/block/dm-0/dm/uuid`, and `/proc/self/mountinfo` but these are files that very few normal applications access. This created a distinctive behavioral fingerprint in strace and auditd.
  
 **Decision:** Generate node identity from `SHA-256(/etc/hostname || /etc/machine-id || arch)`, using only files that hundreds of normal applications read. `/etc/hostname` is read by virtually every application through `gethostname()`. `/etc/machine-id` is read by systemd, dbus, journald, flatpak, snap, Firefox, Chrome, and dozens of other applications.

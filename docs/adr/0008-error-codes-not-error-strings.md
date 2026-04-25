@@ -1,5 +1,7 @@
 **Date:** 2026-04-07
+
 **Status:** Accepted
+
 **Context:** Rust's `thiserror` derive macro generates descriptive error messages like `"encryption failed"`, `"invalid public key"`, `"key derivation failed"` that appear in the binary and describe exactly what the tool does. Error variant names like `EncryptionFailed`, `InvalidPublicKey` also survive in the binary through the derived `Debug` implementation.
  
 **Decision:** Replace descriptive error messages with single-byte error codes in production builds. Manual `Debug` implementation outputs hex codes (`E01`, `E02`) instead of variant names. Descriptive messages are gated behind `--features debug` using `cfg_attr`. A dedicated `errlog` module stores errors as `(timestamp, code)` tuples in memory for optional exfiltration.

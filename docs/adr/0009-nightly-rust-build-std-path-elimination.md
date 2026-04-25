@@ -1,5 +1,7 @@
 **Date:** 2026-04-08
+
 **Status:** Accepted
+
 **Context:** The Rust compiler embeds source file paths in panic messages. A standard release build contains the developer's home directory, cargo registry paths, rustup toolchain paths, and the rustc version with git commit hash. These leak the build environment and identify the binary as Rust.
  
 **Decision:** Use nightly Rust with:

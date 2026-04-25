@@ -1,6 +1,7 @@
 # ADR 0002: Dual-Layer Encryption Architecture
 
 **Date:** 2026-04-06
+
 **Status:** Accepted
 
 **Context:** A single encryption layer creates a tradeoff, ECIES provides forward secrecy but leaves identifiable EC point structures (33-byte compressed P-256 points) in every message. Simple obfuscation (XOR) could hide these but is trivially reversible. We want protocol-level opacity, cryptographic forward secrecy, and zero per-message key exchange overhead on the wire.

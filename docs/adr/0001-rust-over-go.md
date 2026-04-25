@@ -1,5 +1,7 @@
 **Date:** 2026-04-06
+
 **Status:** Accepted
+
 **Context:** The initial Glimmer prototype was written in Go. While functional for basic checkin/beacon/encryption, Go binaries carry the full runtime and garbage collector (~3-4MB minimum even stripped), embed identifiable strings from the runtime, and produce GC memory access patterns that are fingerprintable. Binary analysis resistance is a core requirement for a C2 beacon.
  
 **Decision:** Rewrite the beacon in Rust. Rust compiles to native code with no runtime, no garbage collector, and provides direct access to syscalls. Memory management happens at compile time through the ownership model, leaving no runtime GC patterns to fingerprint.

@@ -1,5 +1,7 @@
 **Date:** 2026-04-08
+
 **Status:** Accepted
+
 **Context:** Sensitive strings in the binary like HTTP headers (`POST`, `Cookie`, `Content-Type`), file paths (`/etc/hostname`, `/etc/machine-id`), protocol elements, etc are trivially discoverable with `strings` and form the basis of YARA signatures. These strings need to be present at runtime but should not be readable in the static binary.
  
 **Decision:** A `build.rs` script generates a random 16-byte XOR key per build and encodes all sensitive strings at compile time. The encoded bytes and key are written to a generated Rust source file that gets compiled into the binary. At runtime, strings are decoded on demand using rolling XOR with the per-build key.
