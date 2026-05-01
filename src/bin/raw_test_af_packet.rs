@@ -8,6 +8,11 @@ use glimmer::dns;
 use glimmer::sys;
 
 fn main() -> std::io::Result<()> {
+
+    // --bypass sets PACKET_QDISC_BYPASS, bypassing tc/netfilter
+    let bypass = std::env::args().any(|a| a == "--bypass");
+    println!("sending {} packet", if bypass { "bypass" } else { "normal" });
+
     // Open AF_PACKET SOCK_DGRAM socket
     let fd = unsafe { socket(AF_PACKET, SOCK_DGRAM, (ETH_P_IP as u16).to_be() as i32) };
     if fd < 0 { return Err(std::io::Error::last_os_error()); }
@@ -21,16 +26,15 @@ fn main() -> std::io::Result<()> {
     let src_ip: [u8; 4] = get_interface_ipv4("eno1").expect("Could not find Ipv4 addr on eno1");
     println!("[*] Source IP: {:?}", src_ip);
 
-    // 3. Look up gateway's MAC from ARP table
+    // Look up gateway's MAC from ARP table
     let gateway_mac = get_gateway_mac(&gateway_ip)?;
     println!("[*] Gateway MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
              gateway_mac[0], gateway_mac[1], gateway_mac[2],
              gateway_mac[3], gateway_mac[4], gateway_mac[5]);
 
-    // 4. Get interface index
+    // Get interface index
     let if_index = unsafe { libc::if_nametoindex(ifname.as_ptr()) } as i32;
 
-    // let src_ip: [u8; 4] = [10, 90, 90, 154];
     let dst_ip: [u8; 4] = [10, 90, 95, 53];
 
     let src_port = sys::rand_u64() as u16;
@@ -40,7 +44,6 @@ fn main() -> std::io::Result<()> {
     let qid = sys::rand_u64() as u16; // random query id
 
     // Build the IP packet: IP header + UDP header + DNS query payload
-
     let dns_len = dns::build_dns_query(qid,"test.com", 1, &mut dns_buf)?;  // build dns query packet in dns_buf, return len
     let udp_len = 8 + dns_len as u16; // 8-byte UDP Header + payload (len of dns query in dns_buf)
     let total_len: u16 = 20 + udp_len; // 20-byte IP header + 8-byte UDP header + payload (len of dns query in dns_buf)
@@ -93,6 +96,28 @@ fn main() -> std::io::Result<()> {
     addr.sll_ifindex = if_index;
     addr.sll_halen = 6;
     addr.sll_addr[0..6].copy_from_slice(&gateway_mac);
+
+
+
+    if bypass {
+        const PACKET_QDISC_BYPASS: libc::c_int = 20;
+
+        let one: libc::c_int = 1;
+        let ret = unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_PACKET,
+                PACKET_QDISC_BYPASS,
+                &one as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&one) as libc::socklen_t,
+            )
+        };
+        if ret < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+
+
 
     let sent = unsafe {
         libc::sendto(
