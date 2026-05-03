@@ -1,0 +1,7 @@
+[package]
+name = "glimmer-obfstr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+glimmer-obfstr-macros = { path = "../obfstr-macros" }
