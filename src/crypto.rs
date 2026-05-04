@@ -154,6 +154,7 @@ impl SessionKey {
 
         let mut nonce_bytes = [0u8; 12];
         rand::RngCore::fill_bytes(&mut OsRng, &mut nonce_bytes);
+        #[allow(deprecated)]
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
@@ -174,6 +175,7 @@ impl SessionKey {
 
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+        #[allow(deprecated)]
         let nonce = Nonce::from_slice(&data[..12]);
         let ciphertext = &data[12..];
 
