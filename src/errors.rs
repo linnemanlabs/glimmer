@@ -1,166 +1,143 @@
-use thiserror::Error;
 use crate::errlog;
+
+/// Implements code(), record(), Debug, Display, and Error for an error enum.
+/// Debug and Display both emit the hex error code as "E{:02x}".
+macro_rules! impl_error {
+    ($ty:ty, { $($variant:pat => $code:expr),+ $(,)? }) => {
+        impl $ty {
+            fn code(&self) -> u8 {
+                match self { $($variant => $code),+ }
+            }
+
+            pub fn record(&self) {
+                errlog::record(self.code());
+            }
+        }
+
+        impl std::fmt::Debug for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "E{:02x}", self.code())
+            }
+        }
+
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "E{:02x}", self.code())
+            }
+        }
+
+        impl std::error::Error for $ty {}
+    };
+}
 
 // --- Crypto Errors ---
 
-#[derive(Error)]
 pub enum CryptoError {
-    #[cfg_attr(feature = "debug", error("invalid public key: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     InvalidPublicKey(String),
-
-    #[cfg_attr(feature = "debug", error("encryption failed: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     EncryptionFailed(String),
-
-    #[cfg_attr(feature = "debug", error("decryption failed: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     DecryptionFailed(String),
-
-    #[cfg_attr(feature = "debug", error("ciphertext too short: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     CiphertextTooShort(usize),
-
-    #[cfg_attr(feature = "debug", error("key derivation failed: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     KeyDerivation(String),
 }
 
-impl std::fmt::Debug for CryptoError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "E{:02x}", match self {
-            CryptoError::InvalidPublicKey(_) => 0x01u8,
-            CryptoError::EncryptionFailed(_) => 0x02,
-            CryptoError::DecryptionFailed(_) => 0x03,
-            CryptoError::CiphertextTooShort(_) => 0x04,
-            CryptoError::KeyDerivation(_) => 0x05,
-        })
-    }
-}
-
-impl CryptoError {
-    pub fn record(&self) {
-        let code = match self {
-            CryptoError::InvalidPublicKey(_) => errlog::codes::INVALID_PUBKEY,
-            CryptoError::EncryptionFailed(_) => errlog::codes::ENCRYPT_FAIL,
-            CryptoError::DecryptionFailed(_) => errlog::codes::DECRYPT_FAIL,
-            CryptoError::CiphertextTooShort(_) => errlog::codes::SHORT_CIPHERTEXT,
-            CryptoError::KeyDerivation(_) => errlog::codes::KEY_DERIVATION,
-        };
-        errlog::record(code);
-    }
-}
+impl_error!(CryptoError, {
+    CryptoError::InvalidPublicKey(_) => errlog::codes::INVALID_PUBKEY,
+    CryptoError::EncryptionFailed(_) => errlog::codes::ENCRYPT_FAIL,
+    CryptoError::DecryptionFailed(_) => errlog::codes::DECRYPT_FAIL,
+    CryptoError::CiphertextTooShort(_) => errlog::codes::SHORT_CIPHERTEXT,
+    CryptoError::KeyDerivation(_) => errlog::codes::KEY_DERIVATION,
+});
 
 // --- Proto Errors ---
 
-#[derive(Error)]
 pub enum ProtoError {
-    #[cfg_attr(feature = "debug", error("serialization failed: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
-    Serialize(#[from] serde_json::Error),
-
-    #[cfg_attr(feature = "debug", error("invalid envelope: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
+    Serialize(serde_json::Error),
     InvalidEnvelope(String),
 }
 
-impl std::fmt::Debug for ProtoError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "E{:02x}", match self {
-            ProtoError::Serialize(_) => 0x10u8,
-            ProtoError::InvalidEnvelope(_) => 0x11,
-        })
-    }
-}
+impl_error!(ProtoError, {
+    ProtoError::Serialize(_) => errlog::codes::SERIALIZE_FAIL,
+    ProtoError::InvalidEnvelope(_) => errlog::codes::INVALID_ENVELOPE,
+});
 
-impl ProtoError {
-    pub fn record(&self) {
-        let code = match self {
-            ProtoError::Serialize(_) => errlog::codes::SERIALIZE_FAIL,
-            ProtoError::InvalidEnvelope(_) => errlog::codes::INVALID_ENVELOPE,
-        };
-        errlog::record(code);
+impl From<serde_json::Error> for ProtoError {
+    fn from(e: serde_json::Error) -> Self {
+        ProtoError::Serialize(e)
     }
 }
 
 // --- Channel Errors ---
 
-#[derive(Error)]
 pub enum ChannelError {
-    #[cfg_attr(feature = "debug", error("send failed: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     SendFailed(String),
-
-    #[cfg_attr(feature = "debug", error("no endpoints configured"))]
-    #[cfg_attr(not(feature = "debug"), error("a"))]
     NoEndpoints,
-
-    #[cfg_attr(feature = "debug", error("all endpoints exhausted"))]
-    #[cfg_attr(not(feature = "debug"), error("b"))]
     AllEndpointsFailed,
-
-    #[cfg_attr(feature = "debug", error("response error: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
     ResponseError(String),
 }
 
-impl std::fmt::Debug for ChannelError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "E{:02x}", match self {
-            ChannelError::SendFailed(_) => 0x20u8,
-            ChannelError::NoEndpoints => 0x21,
-            ChannelError::AllEndpointsFailed => 0x22,
-            ChannelError::ResponseError(_) => 0x23,
-        })
-    }
-}
-
-impl ChannelError {
-    pub fn record(&self) {
-        let code = match self {
-            ChannelError::SendFailed(_) => errlog::codes::SEND_FAIL,
-            ChannelError::NoEndpoints => errlog::codes::NO_ENDPOINTS,
-            ChannelError::AllEndpointsFailed => errlog::codes::CONNECT_FAIL,
-            ChannelError::ResponseError(_) => errlog::codes::SEND_FAIL,
-        };
-        errlog::record(code);
-    }
-}
+impl_error!(ChannelError, {
+    ChannelError::SendFailed(_) => errlog::codes::SEND_FAIL,
+    ChannelError::NoEndpoints => errlog::codes::NO_ENDPOINTS,
+    ChannelError::AllEndpointsFailed => errlog::codes::CONNECT_FAIL,
+    ChannelError::ResponseError(_) => errlog::codes::SEND_FAIL,
+});
 
 // --- Config Errors ---
 
-#[derive(Error)]
 pub enum ConfigError {
-    #[cfg_attr(feature = "debug", error("file read error: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
-    FileRead(#[from] std::io::Error),
-
-    #[cfg_attr(feature = "debug", error("parse error: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
-    Parse(#[from] serde_json::Error),
-
-    #[cfg_attr(feature = "debug", error("invalid key: {0}"))]
-    #[cfg_attr(not(feature = "debug"), error("{0}"))]
+    FileRead(std::io::Error),
+    Parse(serde_json::Error),
     InvalidServerKey(String),
 }
 
-impl std::fmt::Debug for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "E{:02x}", match self {
-            ConfigError::FileRead(_) => 0x30u8,
-            ConfigError::Parse(_) => 0x31,
-            ConfigError::InvalidServerKey(_) => 0x32,
-        })
+impl_error!(ConfigError, {
+    ConfigError::FileRead(_) => errlog::codes::CONFIG_READ,
+    ConfigError::Parse(_) => errlog::codes::CONFIG_PARSE,
+    ConfigError::InvalidServerKey(_) => errlog::codes::CONFIG_KEY,
+});
+
+impl From<std::io::Error> for ConfigError {
+    fn from(e: std::io::Error) -> Self {
+        ConfigError::FileRead(e)
     }
 }
 
-impl ConfigError {
-    pub fn record(&self) {
-        let code = match self {
-            ConfigError::FileRead(_) => errlog::codes::CONFIG_READ,
-            ConfigError::Parse(_) => errlog::codes::CONFIG_PARSE,
-            ConfigError::InvalidServerKey(_) => errlog::codes::CONFIG_KEY,
-        };
-        errlog::record(code);
+impl From<serde_json::Error> for ConfigError {
+    fn from(e: serde_json::Error) -> Self {
+        ConfigError::Parse(e)
     }
 }
+
+// --- Collect Errors ---
+
+pub enum CollectError {
+    Failed,
+    NotAvailable,
+    NoKeyring,
+    KeyringGetFailed,
+}
+
+impl_error!(CollectError, {
+    CollectError::Failed => errlog::codes::COLLECT_FAILED,
+    CollectError::NotAvailable => errlog::codes::COLLECT_NOT_AVAIL,
+    CollectError::NoKeyring => errlog::codes::COLLECT_NO_KEYRING,
+    CollectError::KeyringGetFailed => errlog::codes::COLLECT_KEYRING_FAILED,
+});
+
+// --- Browser Errors ---
+
+pub enum BrowserError {
+    DatabaseNotFound,
+    QueryFailed,
+    KeyRetrieval,
+    DecryptFailed,
+    ParseFailed,
+}
+
+impl_error!(BrowserError, {
+    BrowserError::DatabaseNotFound => errlog::codes::BROWSER_DB_NOT_FOUND,
+    BrowserError::QueryFailed => errlog::codes::BROWSER_QUERY_FAIL,
+    BrowserError::KeyRetrieval => errlog::codes::BROWSER_KEY_RETRIEVAL,
+    BrowserError::DecryptFailed => errlog::codes::BROWSER_DECRYPT_FAIL,
+    BrowserError::ParseFailed => errlog::codes::BROWSER_PARSE_FAIL,
+});
