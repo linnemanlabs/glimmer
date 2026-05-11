@@ -19,8 +19,20 @@ name = "keygen"
 path = "src/bin/keygen.rs"
 
 [[bin]]
-name = "encode_string"
-path = "src/bin/encode_string.rs"
+name = "raw-test-af-inet"
+path = "src/bin/raw_test_af_inet.rs"
+
+[[bin]]
+name = "raw-test-af-packet"
+path = "src/bin/raw_test_af_packet.rs"
+
+[[bin]]
+name = "dump-keyring"
+path = "src/bin/dump_keyring.rs"
+
+[[bin]]
+name = "dump-browser"
+path = "src/bin/dump_browser.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -37,6 +49,18 @@ chrono = "0.4"
 thiserror = "2"
 libc = "0.2"
 filetime = "0.2.27"
+glimmer-obfstr = { path = "crates/obfstr" }
+zbus = "5.0"
+
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+aes = "0.8"
+cbc = "0.1"
+hmac = "0.12"
+pbkdf2 = "0.12"
+sha1 = "0.10"
+gvariant = "0.5"
+anyhow = "1"
 
 [profile.release]
 opt-level = "z"     # optimize for size over speed
@@ -44,3 +68,4 @@ lto = true          # link-time optimization, eliminates dead code
 codegen-units = 1   # single codegen unit, better optimization
 panic = "abort"     # no unwinding machinery
 strip = true        # strip symbols and debug info
+debug = false

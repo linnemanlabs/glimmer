@@ -12,6 +12,8 @@ use glimmer::crypto::{self, TimeBasedKey};
 use glimmer::keystore::KeyStore;
 use glimmer::proto::{Envelope, MsgType};
 
+use std::io::BufRead;
+
 struct Server {
     keystore: KeyStore,
     nodes: Mutex<HashMap<String, TimeBasedKey>>,
@@ -302,28 +304,67 @@ fn extract_node_id(headers: &str) -> Option<String> {
         })
 }
 
+// fn read_http_request(
+//     stream: &mut std::net::TcpStream,
+// ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+//     let mut headers_buf = Vec::new();
+//     let mut byte = [0u8; 1];
+
+//     loop {
+//         stream.read_exact(&mut byte)?;
+//         headers_buf.push(byte[0]);
+
+//         if headers_buf.len() >= 4
+//             && &headers_buf[headers_buf.len() - 4..] == b"\r\n\r\n"
+//         {
+//             break;
+//         }
+
+//         if headers_buf.len() > 8192 {
+//             return Err("headers too large".into());
+//         }
+//     }
+
+//     let headers = String::from_utf8_lossy(&headers_buf).to_string();
+
+//     let content_length = headers
+//         .lines()
+//         .find(|line| line.to_lowercase().starts_with("content-length:"))
+//         .and_then(|line| line.split(':').nth(1))
+//         .and_then(|v| v.trim().parse::<usize>().ok())
+//         .unwrap_or(0);
+
+//     if content_length == 0 {
+//         return Ok((headers, None));
+//     }
+
+//     if content_length > 1 << 20 {
+//         return Err("body too large".into());
+//     }
+
+//     let mut body = vec![0u8; content_length];
+//     stream.read_exact(&mut body)?;
+
+//     Ok((headers, Some(String::from_utf8(body)?)))
+// }
+
 fn read_http_request(
     stream: &mut std::net::TcpStream,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
-    let mut headers_buf = Vec::new();
-    let mut byte = [0u8; 1];
+    let mut reader = std::io::BufReader::new(stream);
+    let mut headers = String::new();
 
     loop {
-        stream.read_exact(&mut byte)?;
-        headers_buf.push(byte[0]);
-
-        if headers_buf.len() >= 4
-            && &headers_buf[headers_buf.len() - 4..] == b"\r\n\r\n"
-        {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        headers.push_str(&line);
+        if line == "\r\n" {
             break;
         }
-
-        if headers_buf.len() > 8192 {
+        if headers.len() > 8192 {
             return Err("headers too large".into());
         }
     }
-
-    let headers = String::from_utf8_lossy(&headers_buf).to_string();
 
     let content_length = headers
         .lines()
@@ -341,11 +382,10 @@ fn read_http_request(
     }
 
     let mut body = vec![0u8; content_length];
-    stream.read_exact(&mut body)?;
+    reader.read_exact(&mut body)?;
 
     Ok((headers, Some(String::from_utf8(body)?)))
 }
-
 
 fn handle_dnf_channel(
     stream: &mut std::net::TcpStream,

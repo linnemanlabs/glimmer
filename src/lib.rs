@@ -12,7 +12,9 @@ pub mod obfuscate;
 pub mod proto;
 pub mod raw_tcp;
 pub mod sys;
-pub mod strings;
+pub mod dbus;
+
+pub mod collect;
 
 #[macro_use]
 pub mod debug;

