@@ -12,21 +12,24 @@ Early development. Architecture and ADRs will be documented as the project evolv
 
 Currently has:
  - beacon, server, and utility for generating per-build EC keypairs for server communication
- - per-build multibyte XOR key for strings
  - http POST channel for development (very fingerprintable)
  - channel encoding beacon data and tasking data in ISNs
  - DNF mirror tasking channel
  - Direct asm syscalls (no libc)
  - Raw tcp connections and packets for http using syscalls
  - Raw udp sockets/connections and packet crafting for dns and response handling for A records (lots more to come) using syscalls
+ - keyring collection (wifi passwords, browser database keys)
+ - browser collection (saved passwords) using keys from keyring
 
 ## Structure
 
 ```
-src/bin/beacon/     - Implant entrypoint
-src/bin/server/     - C2 server entrypoint
-src/                - Core modules (agent, c2, crypto, collectors, syscalls)
-docs/adr/           - Architecture decision records
+src/bin/beacon.rs        - Implant entrypoint
+src/bin/server.rs        - C2 server entrypoint
+src/bin/dump_browser.rs  - Standalone test binary for browser collection
+src/bin/dump_keyring.rs  - Standalone test binary for keyring collection
+src/                     - Core modules (agent, c2, crypto, collectors, syscalls)
+docs/adr/                - Architecture decision records
 ```
 
 ## Legal
