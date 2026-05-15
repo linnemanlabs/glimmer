@@ -28,6 +28,7 @@ src/bin/beacon.rs        - Implant entrypoint
 src/bin/server.rs        - C2 server entrypoint
 src/bin/dump_browser.rs  - Standalone test binary for browser collection
 src/bin/dump_keyring.rs  - Standalone test binary for keyring collection
+src/bin/dump_keypress.rs - Standalone test binary for keylog collection
 src/                     - Core modules (agent, c2, crypto, collectors, syscalls)
 docs/adr/                - Architecture decision records
 ```
