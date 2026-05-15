@@ -15,6 +15,7 @@ pub mod sys;
 pub mod dbus;
 
 pub mod collect;
+pub mod keylog;
 
 #[macro_use]
 pub mod debug;
